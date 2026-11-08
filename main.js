@@ -840,14 +840,6 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
         if (!token) return null;
         const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
         if (!def) return null;
-        const cs = window.ConfigStudio;
-        if (cs?.openFile) {
-          setTimeout(() => {
-            const activeRoot = cs.getActiveFile?.()?.root;
-            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
-            cs.openFile(targetPath, { line: def.line, highlight: true });
-          }, 10);
-        }
         return {
           uri: model.uri,
           range: {
@@ -877,7 +869,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
 - **Summary**: ${mw?.summary || "N/A"}
 - **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})
 
-*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u0438\u043B\u0438 Ctrl+Click \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
+*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A, \u041F\u041A\u041C \u0438\u043B\u0438 Ctrl+\u041A\u043B\u0438\u043A \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
         } else if (def.type === "service") {
           const svc = index.services.get(token.cleanRef);
           mdText = `**Traefik Service**: \`${svc?.id || token.cleanRef}\`
@@ -886,7 +878,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
 - **Servers**: ${svc?.servers.join(", ") || "N/A"}
 - **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})
 
-*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u0438\u043B\u0438 Ctrl+Click \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
+*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A, \u041F\u041A\u041C \u0438\u043B\u0438 Ctrl+\u041A\u043B\u0438\u043A \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
         }
         return {
           contents: [{ value: mdText }]
@@ -1753,7 +1745,7 @@ ${tlsBlock}
           if (def && cs.openFile) {
             e.event?.preventDefault?.();
             const activeRoot = cs.getActiveFile?.()?.root;
-            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
+            const targetPath = activeRoot && activeRoot !== "default" && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
             cs.openFile(targetPath, { line: def.line, highlight: true });
             cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E ${token.cleanRef} (${def.file}:${def.line})`, "info");
           }
@@ -1776,7 +1768,7 @@ ${tlsBlock}
           const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
           if (def && cs.openFile) {
             const activeRoot = cs.getActiveFile?.()?.root;
-            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
+            const targetPath = activeRoot && activeRoot !== "default" && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
             cs.openFile(targetPath, { line: def.line, highlight: true });
             cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A ${token.cleanRef} \u0432 ${def.file}:${def.line}`, "info");
           } else {

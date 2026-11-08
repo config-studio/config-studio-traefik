@@ -437,7 +437,11 @@ export function setupMonacoTraefik(monaco: any, indexer: TraefikWorkspaceIndexer
     },
   });
 
-  // 2. Monaco Go to Definition Provider (F12 / Ctrl+Click)
+  // 2. Monaco Go to Definition Provider (Hover link preview)
+  // Note: provideDefinition is queried by Monaco on mouse hover while holding Ctrl
+  // to compute link decorations. Do NOT call openFile here (that causes accidental jumps on keydown).
+  // Real navigation is triggered by explicit user actions: Double-Click, Ctrl+Click (onMouseDown),
+  // Right-Click Context Menu, and F12 action (cs-traefik-goto-definition).
   monaco.languages.registerDefinitionProvider('yaml', {
     provideDefinition: (model: any, position: any) => {
       const lineContent = model.getLineContent(position.lineNumber);
@@ -446,15 +450,6 @@ export function setupMonacoTraefik(monaco: any, indexer: TraefikWorkspaceIndexer
 
       const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
       if (!def) return null;
-
-      const cs = (window as any).ConfigStudio;
-      if (cs?.openFile) {
-        setTimeout(() => {
-          const activeRoot = cs.getActiveFile?.()?.root;
-          const targetPath = activeRoot && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
-          cs.openFile(targetPath, { line: def.line, highlight: true });
-        }, 10);
-      }
 
       return {
         uri: model.uri,
@@ -485,10 +480,10 @@ export function setupMonacoTraefik(monaco: any, indexer: TraefikWorkspaceIndexer
         const mw =
           index.middlewares.get(token.cleanRef) ||
           index.middlewares.get(`mw-${token.cleanRef}`);
-        mdText = `**Traefik Middleware**: \`${mw?.id || token.cleanRef}\`\n\n- **Type**: \`${mw?.type || 'unknown'}\`\n- **Summary**: ${mw?.summary || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик или Ctrl+Click для перехода)*`;
+        mdText = `**Traefik Middleware**: \`${mw?.id || token.cleanRef}\`\n\n- **Type**: \`${mw?.type || 'unknown'}\`\n- **Summary**: ${mw?.summary || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик, ПКМ или Ctrl+Клик для перехода)*`;
       } else if (def.type === 'service') {
         const svc = index.services.get(token.cleanRef);
-        mdText = `**Traefik Service**: \`${svc?.id || token.cleanRef}\`\n\n- **Type**: \`${svc?.type || 'loadBalancer'}\`\n- **Servers**: ${svc?.servers.join(', ') || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик или Ctrl+Click для перехода)*`;
+        mdText = `**Traefik Service**: \`${svc?.id || token.cleanRef}\`\n\n- **Type**: \`${svc?.type || 'loadBalancer'}\`\n- **Servers**: ${svc?.servers.join(', ') || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик, ПКМ или Ctrl+Клик для перехода)*`;
       }
 
       return {

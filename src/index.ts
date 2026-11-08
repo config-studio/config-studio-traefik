@@ -151,7 +151,7 @@ class StudioFsProvider implements FsProvider {
         if (def && cs.openFile) {
           e.event?.preventDefault?.();
           const activeRoot = cs.getActiveFile?.()?.root;
-          const targetPath = activeRoot && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
+          const targetPath = activeRoot && activeRoot !== 'default' && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
           cs.openFile(targetPath, { line: def.line, highlight: true });
           cs.showNotification?.(`Переход к определению ${token.cleanRef} (${def.file}:${def.line})`, 'info');
         }
@@ -177,7 +177,7 @@ class StudioFsProvider implements FsProvider {
         const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
         if (def && cs.openFile) {
           const activeRoot = cs.getActiveFile?.()?.root;
-          const targetPath = activeRoot && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
+          const targetPath = activeRoot && activeRoot !== 'default' && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
           cs.openFile(targetPath, { line: def.line, highlight: true });
           cs.showNotification?.(`Переход к ${token.cleanRef} в ${def.file}:${def.line}`, 'info');
         } else {
