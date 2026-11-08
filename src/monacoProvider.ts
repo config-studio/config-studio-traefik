@@ -450,7 +450,9 @@ export function setupMonacoTraefik(monaco: any, indexer: TraefikWorkspaceIndexer
       const cs = (window as any).ConfigStudio;
       if (cs?.openFile) {
         setTimeout(() => {
-          cs.openFile(def.file, { line: def.line, highlight: true });
+          const activeRoot = cs.getActiveFile?.()?.root;
+          const targetPath = activeRoot && !def.file.includes(':') ? `${activeRoot}:${def.file}` : def.file;
+          cs.openFile(targetPath, { line: def.line, highlight: true });
         }, 10);
       }
 

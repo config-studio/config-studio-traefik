@@ -843,7 +843,9 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
         const cs = window.ConfigStudio;
         if (cs?.openFile) {
           setTimeout(() => {
-            cs.openFile(def.file, { line: def.line, highlight: true });
+            const activeRoot = cs.getActiveFile?.()?.root;
+            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
+            cs.openFile(targetPath, { line: def.line, highlight: true });
           }, 10);
         }
         return {
@@ -1750,7 +1752,9 @@ ${tlsBlock}
           const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
           if (def && cs.openFile) {
             e.event?.preventDefault?.();
-            cs.openFile(def.file, { line: def.line, highlight: true });
+            const activeRoot = cs.getActiveFile?.()?.root;
+            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
+            cs.openFile(targetPath, { line: def.line, highlight: true });
             cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E ${token.cleanRef} (${def.file}:${def.line})`, "info");
           }
         }
@@ -1771,7 +1775,9 @@ ${tlsBlock}
           if (!token) return;
           const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
           if (def && cs.openFile) {
-            cs.openFile(def.file, { line: def.line, highlight: true });
+            const activeRoot = cs.getActiveFile?.()?.root;
+            const targetPath = activeRoot && !def.file.includes(":") ? `${activeRoot}:${def.file}` : def.file;
+            cs.openFile(targetPath, { line: def.line, highlight: true });
             cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A ${token.cleanRef} \u0432 ${def.file}:${def.line}`, "info");
           } else {
             cs.showNotification?.(`\u041E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0434\u043B\u044F '${token.cleanRef}' \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E`, "error");
