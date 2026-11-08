@@ -12,6 +12,13 @@ export function openMatrixModal(indexer: TraefikWorkspaceIndexer, onOpenWizard: 
   const modal = document.createElement('div');
   modal.className = 'cs-traefik-modal cs-traefik-modal-xl';
 
+  // Trigger an asynchronous scan to ensure the freshest index and auto-update
+  indexer.scanWorkspace().then(() => {
+    if (document.body.contains(overlay)) {
+      renderContent();
+    }
+  });
+
   function renderContent() {
     const index = indexer.getIndex();
     if (!index) {

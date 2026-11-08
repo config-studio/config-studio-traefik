@@ -6,57 +6,100 @@ import { openWizardModal } from './ui/wizardModal';
 
 class StudioFsProvider implements FsProvider {
   async listFiles(): Promise<string[]> {
+    const fileSet = new Set<string>();
+
+    // 1. Recursive Tree Walk (max depth 4, ignores system/build folders)
     try {
-      // 1. First try listing root tree
-      const res = await fetch('/api/fs/tree', {
-        headers: { 'X-ConfigStudio-Web': '1' },
-      });
-      if (res.ok) {
+      const visited = new Set<string>();
+      const scanDir = async (dirPath: string, depth = 0) => {
+        if (depth > 4 || visited.has(dirPath)) return;
+        visited.add(dirPath);
+
+        const url = dirPath
+          ? `/api/fs/tree?path=${encodeURIComponent(dirPath)}`
+          : '/api/fs/tree';
+        const res = await fetch(url, {
+          headers: { 'X-ConfigStudio-Web': '1' },
+        });
+        if (!res.ok) return;
         const data = await res.json();
-        const results: string[] = [];
-        const walk = (items: any[]) => {
-          if (!Array.isArray(items)) return;
-          for (const item of items) {
-            if (item.isDir && item.children) {
-              walk(item.children);
-            } else if (!item.isDir && item.path) {
-              const lower = item.path.toLowerCase();
-              if (lower.endsWith('.yml') || lower.endsWith('.yaml')) {
-                results.push(item.path);
-              }
+        const items = data.items || [];
+        for (const item of items) {
+          if (item.isDir) {
+            const name = (item.name || '').toLowerCase();
+            if (
+              name.startsWith('.') ||
+              name === 'node_modules' ||
+              name === 'bin' ||
+              name === 'dist' ||
+              name === 'data' ||
+              name === 'tmp' ||
+              name === 'coverage'
+            ) {
+              continue;
+            }
+            await scanDir(item.path || `${dirPath ? dirPath + '/' : ''}${item.name}`, depth + 1);
+          } else if (item.path) {
+            const lower = item.path.toLowerCase();
+            if (lower.endsWith('.yml') || lower.endsWith('.yaml')) {
+              fileSet.add(item.path.replace(/\\/g, '/'));
             }
           }
-        };
-        walk(data.items || data || []);
-        if (results.length > 0) return results;
-      }
-    } catch (_) {}
+        }
+      };
 
+      await scanDir('');
+    } catch (e) {
+      console.warn('[TraefikPlugin] Tree walk error:', e);
+    }
+
+    // 2. Also search backend to guarantee no files are missed
     try {
-      // 2. Fallback: Search for YAML files
       const searchRes = await fetch('/api/fs/search?q=.yml', {
         headers: { 'X-ConfigStudio-Web': '1' },
       });
       if (searchRes.ok) {
         const data = await searchRes.json();
-        return (data.items || []).map((i: any) => i.path || i.name);
+        for (const item of data.items || []) {
+          const p = (item.path || item.name || '').replace(/\\/g, '/');
+          const lower = p.toLowerCase();
+          if (lower.endsWith('.yml') || lower.endsWith('.yaml')) {
+            fileSet.add(p);
+          }
+        }
       }
     } catch (_) {}
 
-    return [];
+    return Array.from(fileSet);
   }
 
   async readFile(path: string): Promise<string> {
+    const normPath = path.replace(/\\/g, '/');
     try {
-      const res = await fetch(`/api/fs/file?path=${encodeURIComponent(path)}`, {
+      const res = await fetch(`/api/fs/file?path=${encodeURIComponent(normPath)}`, {
         headers: { 'X-ConfigStudio-Web': '1' },
       });
-      if (!res.ok) return '';
-      const data = await res.json();
-      return data.content || '';
-    } catch (_) {
-      return '';
+      if (res.ok) {
+        const data = await res.json();
+        return data.content || '';
+      }
+    } catch (_) {}
+
+    // Fallback: if path has root prefix (e.g. "root:rules/foo.yml"), try stripped path
+    if (normPath.includes(':')) {
+      try {
+        const stripped = normPath.split(':').pop() || normPath;
+        const res = await fetch(`/api/fs/file?path=${encodeURIComponent(stripped)}`, {
+          headers: { 'X-ConfigStudio-Web': '1' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.content || '';
+        }
+      } catch (_) {}
     }
+
+    return '';
   }
 }
 

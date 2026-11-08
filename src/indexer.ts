@@ -54,8 +54,12 @@ export class TraefikWorkspaceIndexer {
           name.startsWith('traefik') ||
           name === 'config.yml' ||
           name === 'config.yaml' ||
+          lower.startsWith('rules/') ||
+          lower.startsWith('rules\\') ||
           lower.includes('/rules/') ||
           lower.includes('\\rules\\') ||
+          lower.startsWith('conf.d/') ||
+          lower.startsWith('conf.d\\') ||
           lower.includes('/conf.d/') ||
           lower.includes('\\conf.d\\')
         );
@@ -67,13 +71,32 @@ export class TraefikWorkspaceIndexer {
 
       // Detect rules directory (e.g. `rules` or `/etc/traefik/rules`)
       let detectedRulesDir: string | undefined;
-      for (const f of traefikFiles) {
-        if (f.includes('/rules/') || f.includes('\\rules\\')) {
-          const idx = f.lastIndexOf('rules');
+      for (const f of allFiles) {
+        const lower = f.toLowerCase();
+        if (lower.startsWith('rules/') || lower.startsWith('rules\\') || lower === 'rules') {
+          detectedRulesDir = 'rules';
+          break;
+        }
+        if (lower.includes('/rules/') || lower.includes('\\rules\\')) {
+          const idx = lower.lastIndexOf('rules');
           detectedRulesDir = f.substring(0, idx + 5);
           break;
         }
       }
+      if (!detectedRulesDir) {
+        for (const f of allFiles) {
+          const lower = f.toLowerCase();
+          if (lower.startsWith('conf.d/') || lower.startsWith('conf.d\\')) {
+            detectedRulesDir = 'conf.d';
+            break;
+          }
+        }
+      }
+      if (!detectedRulesDir) {
+        detectedRulesDir = 'rules';
+      }
+
+      const validTraefikFiles: string[] = [];
 
       for (const filePath of traefikFiles) {
         try {
@@ -81,6 +104,26 @@ export class TraefikWorkspaceIndexer {
           if (!content) continue;
 
           const parsed = parseTraefikYaml(content, filePath);
+          const hasEntities =
+            parsed.middlewares.length > 0 ||
+            parsed.services.length > 0 ||
+            parsed.routers.length > 0;
+
+          const lower = filePath.toLowerCase();
+          const inRulesFolder =
+            lower.startsWith('rules/') ||
+            lower.startsWith('rules\\') ||
+            lower.includes('/rules/') ||
+            lower.includes('\\rules\\') ||
+            lower.startsWith('conf.d/') ||
+            lower.startsWith('conf.d\\') ||
+            lower.includes('/conf.d/') ||
+            lower.includes('\\conf.d\\');
+
+          // Only keep files that define Traefik entities or are inside rules directories
+          if (hasEntities || inRulesFolder) {
+            validTraefikFiles.push(filePath);
+          }
 
           parsed.middlewares.forEach((m) => {
             middlewares.set(m.id, m);
@@ -102,7 +145,7 @@ export class TraefikWorkspaceIndexer {
         middlewares,
         services,
         routers,
-        files: traefikFiles,
+        files: validTraefikFiles,
         rulesDir: detectedRulesDir,
         issues: [],
         lastScanTime: Date.now(),

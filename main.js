@@ -363,24 +363,48 @@ var ConfigStudioTraefikPlugin = (() => {
           const lower = f.toLowerCase();
           if (!lower.endsWith(".yml") && !lower.endsWith(".yaml")) return false;
           const name = lower.split(/[\\/]/).pop() || "";
-          return name.startsWith("mw-") || name.startsWith("ser-") || name.startsWith("traefik") || name === "config.yml" || name === "config.yaml" || lower.includes("/rules/") || lower.includes("\\rules\\") || lower.includes("/conf.d/") || lower.includes("\\conf.d\\");
+          return name.startsWith("mw-") || name.startsWith("ser-") || name.startsWith("traefik") || name === "config.yml" || name === "config.yaml" || lower.startsWith("rules/") || lower.startsWith("rules\\") || lower.includes("/rules/") || lower.includes("\\rules\\") || lower.startsWith("conf.d/") || lower.startsWith("conf.d\\") || lower.includes("/conf.d/") || lower.includes("\\conf.d\\");
         });
         const middlewares = /* @__PURE__ */ new Map();
         const services = /* @__PURE__ */ new Map();
         const routers = /* @__PURE__ */ new Map();
         let detectedRulesDir;
-        for (const f of traefikFiles) {
-          if (f.includes("/rules/") || f.includes("\\rules\\")) {
-            const idx = f.lastIndexOf("rules");
+        for (const f of allFiles) {
+          const lower = f.toLowerCase();
+          if (lower.startsWith("rules/") || lower.startsWith("rules\\") || lower === "rules") {
+            detectedRulesDir = "rules";
+            break;
+          }
+          if (lower.includes("/rules/") || lower.includes("\\rules\\")) {
+            const idx = lower.lastIndexOf("rules");
             detectedRulesDir = f.substring(0, idx + 5);
             break;
           }
         }
+        if (!detectedRulesDir) {
+          for (const f of allFiles) {
+            const lower = f.toLowerCase();
+            if (lower.startsWith("conf.d/") || lower.startsWith("conf.d\\")) {
+              detectedRulesDir = "conf.d";
+              break;
+            }
+          }
+        }
+        if (!detectedRulesDir) {
+          detectedRulesDir = "rules";
+        }
+        const validTraefikFiles = [];
         for (const filePath of traefikFiles) {
           try {
             const content = await this.fs.readFile(filePath);
             if (!content) continue;
             const parsed = parseTraefikYaml(content, filePath);
+            const hasEntities = parsed.middlewares.length > 0 || parsed.services.length > 0 || parsed.routers.length > 0;
+            const lower = filePath.toLowerCase();
+            const inRulesFolder = lower.startsWith("rules/") || lower.startsWith("rules\\") || lower.includes("/rules/") || lower.includes("\\rules\\") || lower.startsWith("conf.d/") || lower.startsWith("conf.d\\") || lower.includes("/conf.d/") || lower.includes("\\conf.d\\");
+            if (hasEntities || inRulesFolder) {
+              validTraefikFiles.push(filePath);
+            }
             parsed.middlewares.forEach((m) => {
               middlewares.set(m.id, m);
             });
@@ -398,7 +422,7 @@ var ConfigStudioTraefikPlugin = (() => {
           middlewares,
           services,
           routers,
-          files: traefikFiles,
+          files: validTraefikFiles,
           rulesDir: detectedRulesDir,
           issues: [],
           lastScanTime: Date.now()
@@ -632,6 +656,11 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     overlay.className = "cs-traefik-overlay";
     const modal = document.createElement("div");
     modal.className = "cs-traefik-modal cs-traefik-modal-xl";
+    indexer.scanWorkspace().then(() => {
+      if (document.body.contains(overlay)) {
+        renderContent();
+      }
+    });
     function renderContent() {
       const index = indexer.getIndex();
       if (!index) {
@@ -1243,30 +1272,37 @@ ${tlsBlock}
   // src/index.ts
   var StudioFsProvider = class {
     async listFiles() {
+      const fileSet = /* @__PURE__ */ new Set();
       try {
-        const res = await fetch("/api/fs/tree", {
-          headers: { "X-ConfigStudio-Web": "1" }
-        });
-        if (res.ok) {
+        const visited = /* @__PURE__ */ new Set();
+        const scanDir = async (dirPath, depth = 0) => {
+          if (depth > 4 || visited.has(dirPath)) return;
+          visited.add(dirPath);
+          const url = dirPath ? `/api/fs/tree?path=${encodeURIComponent(dirPath)}` : "/api/fs/tree";
+          const res = await fetch(url, {
+            headers: { "X-ConfigStudio-Web": "1" }
+          });
+          if (!res.ok) return;
           const data = await res.json();
-          const results = [];
-          const walk = (items) => {
-            if (!Array.isArray(items)) return;
-            for (const item of items) {
-              if (item.isDir && item.children) {
-                walk(item.children);
-              } else if (!item.isDir && item.path) {
-                const lower = item.path.toLowerCase();
-                if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
-                  results.push(item.path);
-                }
+          const items = data.items || [];
+          for (const item of items) {
+            if (item.isDir) {
+              const name = (item.name || "").toLowerCase();
+              if (name.startsWith(".") || name === "node_modules" || name === "bin" || name === "dist" || name === "data" || name === "tmp" || name === "coverage") {
+                continue;
+              }
+              await scanDir(item.path || `${dirPath ? dirPath + "/" : ""}${item.name}`, depth + 1);
+            } else if (item.path) {
+              const lower = item.path.toLowerCase();
+              if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
+                fileSet.add(item.path.replace(/\\/g, "/"));
               }
             }
-          };
-          walk(data.items || data || []);
-          if (results.length > 0) return results;
-        }
-      } catch (_) {
+          }
+        };
+        await scanDir("");
+      } catch (e) {
+        console.warn("[TraefikPlugin] Tree walk error:", e);
       }
       try {
         const searchRes = await fetch("/api/fs/search?q=.yml", {
@@ -1274,23 +1310,44 @@ ${tlsBlock}
         });
         if (searchRes.ok) {
           const data = await searchRes.json();
-          return (data.items || []).map((i) => i.path || i.name);
+          for (const item of data.items || []) {
+            const p = (item.path || item.name || "").replace(/\\/g, "/");
+            const lower = p.toLowerCase();
+            if (lower.endsWith(".yml") || lower.endsWith(".yaml")) {
+              fileSet.add(p);
+            }
+          }
         }
       } catch (_) {
       }
-      return [];
+      return Array.from(fileSet);
     }
     async readFile(path) {
+      const normPath = path.replace(/\\/g, "/");
       try {
-        const res = await fetch(`/api/fs/file?path=${encodeURIComponent(path)}`, {
+        const res = await fetch(`/api/fs/file?path=${encodeURIComponent(normPath)}`, {
           headers: { "X-ConfigStudio-Web": "1" }
         });
-        if (!res.ok) return "";
-        const data = await res.json();
-        return data.content || "";
+        if (res.ok) {
+          const data = await res.json();
+          return data.content || "";
+        }
       } catch (_) {
-        return "";
       }
+      if (normPath.includes(":")) {
+        try {
+          const stripped = normPath.split(":").pop() || normPath;
+          const res = await fetch(`/api/fs/file?path=${encodeURIComponent(stripped)}`, {
+            headers: { "X-ConfigStudio-Web": "1" }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            return data.content || "";
+          }
+        } catch (_) {
+        }
+      }
+      return "";
     }
   };
   (function initTraefikPlugin() {

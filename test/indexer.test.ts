@@ -68,5 +68,45 @@ http:
 
     // Linter issues should be empty (clean config)
     assert.equal(index.issues.length, 0);
+
+    // rulesDir should be correctly detected as 'rules'
+    assert.equal(index.rulesDir, 'rules');
+  });
+
+  it('should detect rules directory and ignore unrelated configs', async () => {
+    const fileContents: Record<string, string> = {
+      'config.yaml': `
+port: 7890
+socks-port: 7891
+mode: rule
+`,
+      'rules/app.yml': `
+http:
+  routers:
+    app-router:
+      rule: "Host(\`app.example.com\`)"
+      service: "app-service"
+  services:
+    app-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.5:8080"
+`,
+    };
+
+    const mockFs = {
+      listFiles: async () => Object.keys(fileContents),
+      readFile: async (path: string) => fileContents[path] || '',
+    };
+
+    const indexer = new TraefikWorkspaceIndexer(mockFs);
+    const index = await indexer.scanWorkspace();
+
+    assert.equal(index.rulesDir, 'rules');
+    assert.equal(index.routers.size, 1);
+    assert.ok(index.routers.has('app-router'));
+    assert.equal(index.services.size, 1);
+    // config.yaml has no traefik rules, should not be included in traefik files
+    assert.deepEqual(index.files, ['rules/app.yml']);
   });
 });
