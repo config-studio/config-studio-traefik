@@ -514,6 +514,80 @@ var ConfigStudioTraefikPlugin = (() => {
     }
     return { contextType: "unknown", isListItem: false, prefix: "" };
   }
+  function extractTokenAtPosition(lineContent, column) {
+    if (!lineContent) return null;
+    const colIdx = Math.max(0, Math.min(column - 1, lineContent.length - 1));
+    let quoteStart = -1;
+    let quoteEnd = -1;
+    let quoteChar = "";
+    for (let i = colIdx; i >= 0; i--) {
+      if (lineContent[i] === '"' || lineContent[i] === "'") {
+        quoteStart = i;
+        quoteChar = lineContent[i];
+        break;
+      }
+    }
+    if (quoteStart !== -1) {
+      for (let i = colIdx; i < lineContent.length; i++) {
+        if (lineContent[i] === quoteChar && i !== quoteStart) {
+          quoteEnd = i;
+          break;
+        }
+      }
+      if (quoteEnd === -1 && colIdx === quoteStart) {
+        for (let i = quoteStart + 1; i < lineContent.length; i++) {
+          if (lineContent[i] === quoteChar) {
+            quoteEnd = i;
+            break;
+          }
+        }
+      }
+    }
+    if (quoteStart !== -1 && quoteEnd !== -1 && quoteStart < quoteEnd) {
+      const rawToken2 = lineContent.substring(quoteStart + 1, quoteEnd).trim();
+      if (rawToken2) {
+        const cleanRef2 = rawToken2.replace(/@file$/, "").trim();
+        return {
+          rawToken: rawToken2,
+          cleanRef: cleanRef2,
+          startCol: quoteStart + 2,
+          // 1-based start inside quote
+          endCol: quoteEnd + 1
+          // 1-based end inside quote
+        };
+      }
+    }
+    const isTokenChar = (c) => /[a-zA-Z0-9_\-\.\@]/.test(c);
+    let targetIdx = colIdx;
+    if (!isTokenChar(lineContent[targetIdx]) && targetIdx > 0 && isTokenChar(lineContent[targetIdx - 1])) {
+      targetIdx = targetIdx - 1;
+    }
+    if (!isTokenChar(lineContent[targetIdx])) {
+      return null;
+    }
+    let start = targetIdx;
+    while (start > 0 && isTokenChar(lineContent[start - 1])) {
+      start--;
+    }
+    let end = targetIdx;
+    while (end < lineContent.length - 1 && isTokenChar(lineContent[end + 1])) {
+      end++;
+    }
+    let rawToken = lineContent.substring(start, end + 1);
+    if (rawToken.startsWith("-") && rawToken.length > 1) {
+      rawToken = rawToken.substring(1);
+      start++;
+    }
+    rawToken = rawToken.trim();
+    if (!rawToken || rawToken === "-") return null;
+    const cleanRef = rawToken.replace(/@file$/, "").trim();
+    return {
+      rawToken,
+      cleanRef,
+      startCol: start + 1,
+      endCol: end + 2
+    };
+  }
   function computeCompletionRangeAndText(lineContent, column, value, kind) {
     const textUntilPos = lineContent.substring(0, column - 1);
     if (kind === "list") {
@@ -603,7 +677,7 @@ var ConfigStudioTraefikPlugin = (() => {
             endLineNumber: lineNumber,
             endColumn: bareRange.endCol
           },
-          detail: `Traefik Middleware (${mw.type}) \u2014 \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439`,
+          detail: `Traefik Middleware (${mw.type})`,
           sortText: `0_${mw.id}`,
           documentation: {
             value: `**${mw.id}** (${mw.summary || mw.type})
@@ -632,29 +706,6 @@ Defined in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`
 Defined in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`
           }
         });
-        if (mw.id.startsWith("mw-")) {
-          const stripped = mw.id.substring(3);
-          const stripRange = computeCompletionRangeAndText(lineContent, column, stripped, "list");
-          suggestions.push({
-            label: stripped,
-            kind: 18,
-            // Reference
-            insertText: stripRange.insertText,
-            range: {
-              startLineNumber: lineNumber,
-              startColumn: stripRange.startCol,
-              endLineNumber: lineNumber,
-              endColumn: stripRange.endCol
-            },
-            detail: `Traefik Middleware (${mw.type}) \u2014 \u0431\u0435\u0437 mw-`,
-            sortText: `0_0_${stripped}`,
-            documentation: {
-              value: `**${stripped}** (${mw.summary || mw.type})
-
-Defined as **${mw.id}** in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`
-            }
-          });
-        }
       });
     }
     if (ctx.contextType === "service" && index) {
@@ -784,69 +835,105 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     });
     monaco.languages.registerDefinitionProvider("yaml", {
       provideDefinition: (model, position) => {
-        const wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo) return null;
         const lineContent = model.getLineContent(position.lineNumber);
-        const before = lineContent.substring(0, wordInfo.endColumn - 1);
-        const after = lineContent.substring(wordInfo.endColumn - 1);
-        let fullToken = wordInfo.word;
-        if (after.startsWith("@file")) {
-          fullToken = `${wordInfo.word}@file`;
-        } else if (before.endsWith("@") || lineContent.includes(`${wordInfo.word}@file`)) {
-          fullToken = `${wordInfo.word}@file`;
-        }
-        const def = indexer.findDefinition(fullToken) || indexer.findDefinition(wordInfo.word);
+        const token = extractTokenAtPosition(lineContent, position.column);
+        if (!token) return null;
+        const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
         if (!def) return null;
-        const currentPath = window.ConfigStudio?.getActiveFile?.()?.path || "";
-        if (def.file !== currentPath && window.ConfigStudio?.openFile) {
+        const cs = window.ConfigStudio;
+        if (cs?.openFile) {
           setTimeout(() => {
-            window.ConfigStudio.openFile(def.file, { line: def.line, highlight: true });
+            cs.openFile(def.file, { line: def.line, highlight: true });
           }, 10);
         }
-        if (def.file === currentPath) {
-          return {
-            uri: model.uri,
-            range: {
-              startLineNumber: def.line,
-              startColumn: 1,
-              endLineNumber: def.line,
-              endColumn: 100
-            }
-          };
-        }
-        return null;
+        return {
+          uri: model.uri,
+          range: {
+            startLineNumber: def.line,
+            startColumn: 1,
+            endLineNumber: def.line,
+            endColumn: 100
+          }
+        };
       }
     });
     monaco.languages.registerHoverProvider?.("yaml", {
       provideHover: (model, position) => {
-        const wordInfo = model.getWordAtPosition(position);
-        if (!wordInfo) return null;
+        const lineContent = model.getLineContent(position.lineNumber);
+        const token = extractTokenAtPosition(lineContent, position.column);
+        if (!token) return null;
         const index = indexer.getIndex();
         if (!index) return null;
-        const token = wordInfo.word;
-        const def = indexer.findDefinition(token) || indexer.findDefinition(`${token}@file`);
+        const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
         if (!def) return null;
         let mdText = "";
         if (def.type === "middleware") {
-          const cleanToken = token.replace(/@file$/, "");
-          const mw = index.middlewares.get(cleanToken) || index.middlewares.get(`mw-${cleanToken}`) || (cleanToken.startsWith("mw-") ? index.middlewares.get(cleanToken.substring(3)) : null);
-          mdText = `**Traefik Middleware**: \`${mw?.id || token}\`
+          const mw = index.middlewares.get(token.cleanRef) || index.middlewares.get(`mw-${token.cleanRef}`);
+          mdText = `**Traefik Middleware**: \`${mw?.id || token.cleanRef}\`
 
 - **Type**: \`${mw?.type || "unknown"}\`
 - **Summary**: ${mw?.summary || "N/A"}
-- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})`;
+- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})
+
+*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u0438\u043B\u0438 Ctrl+Click \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
         } else if (def.type === "service") {
-          const cleanToken = token.replace(/@file$/, "");
-          const svc = index.services.get(cleanToken);
-          mdText = `**Traefik Service**: \`${svc?.id || token}\`
+          const svc = index.services.get(token.cleanRef);
+          mdText = `**Traefik Service**: \`${svc?.id || token.cleanRef}\`
 
 - **Type**: \`${svc?.type || "loadBalancer"}\`
 - **Servers**: ${svc?.servers.join(", ") || "N/A"}
-- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})`;
+- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})
+
+*(\u0414\u0432\u043E\u0439\u043D\u043E\u0439 \u043A\u043B\u0438\u043A \u0438\u043B\u0438 Ctrl+Click \u0434\u043B\u044F \u043F\u0435\u0440\u0435\u0445\u043E\u0434\u0430)*`;
         }
         return {
           contents: [{ value: mdText }]
         };
+      }
+    });
+    monaco.languages.registerLinkProvider?.("yaml", {
+      provideLinks: (model) => {
+        const index = indexer.getIndex();
+        if (!index) return { links: [] };
+        const links = [];
+        const lineCount = model.getLineCount();
+        for (let i = 1; i <= lineCount; i++) {
+          const line = model.getLineContent(i);
+          if (!line.trim() || line.trim().startsWith("#")) continue;
+          index.middlewares.forEach((mw) => {
+            const searchTokens = [mw.id, `${mw.id}@file`];
+            for (const s of searchTokens) {
+              const idx = line.indexOf(s);
+              if (idx !== -1) {
+                links.push({
+                  range: {
+                    startLineNumber: i,
+                    startColumn: idx + 1,
+                    endLineNumber: i,
+                    endColumn: idx + 1 + s.length
+                  },
+                  tooltip: `Ctrl+Click: \u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E ${mw.id} (${mw.file}:${mw.line})`
+                });
+                break;
+              }
+            }
+          });
+          index.services.forEach((svc) => {
+            const idx = line.indexOf(svc.id);
+            if (idx !== -1 && (line.includes("service:") || line.includes("service :"))) {
+              links.push({
+                range: {
+                  startLineNumber: i,
+                  startColumn: idx + 1,
+                  endLineNumber: i,
+                  endColumn: idx + 1 + svc.id.length
+                },
+                tooltip: `Ctrl+Click: \u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E ${svc.id} (${svc.file}:${svc.line})`
+              });
+            }
+          });
+        }
+        return { links };
       }
     });
   }
@@ -1648,19 +1735,72 @@ ${tlsBlock}
       }
     });
     cs.registerOutlineProvider?.(createTraefikOutlineProvider());
+    function hookEditorInstance(editor, monacoInstance) {
+      if (!editor || editor.__cs_traefik_hooked) return;
+      editor.__cs_traefik_hooked = true;
+      editor.onMouseDown?.((e) => {
+        if (e.event?.detail === 2 || e.event?.ctrlKey || e.event?.metaKey) {
+          const pos = e.target?.position;
+          if (!pos) return;
+          const model = editor.getModel?.();
+          if (!model) return;
+          const line = model.getLineContent(pos.lineNumber);
+          const token = extractTokenAtPosition(line, pos.column);
+          if (!token) return;
+          const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
+          if (def && cs.openFile) {
+            e.event?.preventDefault?.();
+            cs.openFile(def.file, { line: def.line, highlight: true });
+            cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E ${token.cleanRef} (${def.file}:${def.line})`, "info");
+          }
+        }
+      });
+      editor.addAction?.({
+        id: "cs-traefik-goto-definition",
+        label: "Traefik: \u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u043E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u044E",
+        keybindings: monacoInstance?.KeyMod?.CtrlCmd ? [monacoInstance.KeyMod.CtrlCmd | 123, 123] : [123],
+        contextMenuGroupId: "navigation",
+        contextMenuOrder: 1.5,
+        run: (ed) => {
+          const pos = ed.getPosition?.();
+          if (!pos) return;
+          const model = ed.getModel?.();
+          if (!model) return;
+          const line = model.getLineContent(pos.lineNumber);
+          const token = extractTokenAtPosition(line, pos.column);
+          if (!token) return;
+          const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
+          if (def && cs.openFile) {
+            cs.openFile(def.file, { line: def.line, highlight: true });
+            cs.showNotification?.(`\u041F\u0435\u0440\u0435\u0445\u043E\u0434 \u043A ${token.cleanRef} \u0432 ${def.file}:${def.line}`, "info");
+          } else {
+            cs.showNotification?.(`\u041E\u043F\u0440\u0435\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0434\u043B\u044F '${token.cleanRef}' \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E`, "error");
+          }
+        }
+      });
+    }
     const monaco = cs.getMonaco?.();
     if (monaco) {
       setupMonacoTraefik(monaco, indexer);
+      const initialEditor = cs.getEditor?.();
+      if (initialEditor) hookEditorInstance(initialEditor, monaco);
     } else {
       const checkMonaco = setInterval(() => {
         const m = cs.getMonaco?.();
         if (m) {
           setupMonacoTraefik(m, indexer);
+          const ed = cs.getEditor?.();
+          if (ed) hookEditorInstance(ed, m);
           clearInterval(checkMonaco);
         }
       }, 500);
       setTimeout(() => clearInterval(checkMonaco), 1e4);
     }
+    setInterval(() => {
+      const ed = cs.getEditor?.();
+      const m = cs.getMonaco?.();
+      if (ed) hookEditorInstance(ed, m);
+    }, 1e3);
     cs.registerToolbarButton?.({
       id: "cs-btn-traefik-matrix",
       pluginId: "traefik",

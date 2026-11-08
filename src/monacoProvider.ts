@@ -63,6 +63,108 @@ export function getYamlContext(
   return { contextType: 'unknown', isListItem: false, prefix: '' };
 }
 
+export interface ExtractedToken {
+  rawToken: string;
+  cleanRef: string;
+  startCol: number;
+  endCol: number;
+}
+
+export function extractTokenAtPosition(
+  lineContent: string,
+  column: number
+): ExtractedToken | null {
+  if (!lineContent) return null;
+  const colIdx = Math.max(0, Math.min(column - 1, lineContent.length - 1));
+
+  // 1. Check if cursor is inside quotes (e.g. `"mw-security-headers@file"` or `'mw-...'`)
+  let quoteStart = -1;
+  let quoteEnd = -1;
+  let quoteChar = '';
+
+  for (let i = colIdx; i >= 0; i--) {
+    if (lineContent[i] === '"' || lineContent[i] === "'") {
+      quoteStart = i;
+      quoteChar = lineContent[i];
+      break;
+    }
+  }
+
+  if (quoteStart !== -1) {
+    for (let i = colIdx; i < lineContent.length; i++) {
+      if (lineContent[i] === quoteChar && i !== quoteStart) {
+        quoteEnd = i;
+        break;
+      }
+    }
+    // Also check if cursor was right at opening or closing quote
+    if (quoteEnd === -1 && colIdx === quoteStart) {
+      for (let i = quoteStart + 1; i < lineContent.length; i++) {
+        if (lineContent[i] === quoteChar) {
+          quoteEnd = i;
+          break;
+        }
+      }
+    }
+  }
+
+  if (quoteStart !== -1 && quoteEnd !== -1 && quoteStart < quoteEnd) {
+    const rawToken = lineContent.substring(quoteStart + 1, quoteEnd).trim();
+    if (rawToken) {
+      const cleanRef = rawToken.replace(/@file$/, '').trim();
+      return {
+        rawToken,
+        cleanRef,
+        startCol: quoteStart + 2, // 1-based start inside quote
+        endCol: quoteEnd + 1,     // 1-based end inside quote
+      };
+    }
+  }
+
+  // 2. Unquoted token: scan boundaries
+  // Valid token characters: [a-zA-Z0-9_\-\.\@]
+  const isTokenChar = (c: string) => /[a-zA-Z0-9_\-\.\@]/.test(c);
+
+  // If current char is not a token char, check one char left (if user clicked right at word end)
+  let targetIdx = colIdx;
+  if (!isTokenChar(lineContent[targetIdx]) && targetIdx > 0 && isTokenChar(lineContent[targetIdx - 1])) {
+    targetIdx = targetIdx - 1;
+  }
+
+  if (!isTokenChar(lineContent[targetIdx])) {
+    return null;
+  }
+
+  let start = targetIdx;
+  while (start > 0 && isTokenChar(lineContent[start - 1])) {
+    start--;
+  }
+
+  let end = targetIdx;
+  while (end < lineContent.length - 1 && isTokenChar(lineContent[end + 1])) {
+    end++;
+  }
+
+  let rawToken = lineContent.substring(start, end + 1);
+
+  // Strip leading list marker dash if attached without space
+  if (rawToken.startsWith('-') && rawToken.length > 1) {
+    rawToken = rawToken.substring(1);
+    start++;
+  }
+
+  rawToken = rawToken.trim();
+  if (!rawToken || rawToken === '-') return null;
+
+  const cleanRef = rawToken.replace(/@file$/, '').trim();
+  return {
+    rawToken,
+    cleanRef,
+    startCol: start + 1,
+    endCol: end + 2,
+  };
+}
+
 export function computeCompletionRangeAndText(
   lineContent: string,
   column: number,
@@ -169,7 +271,7 @@ export function getTraefikSuggestions(
 
   if (ctx.contextType === 'middlewares' && index) {
     index.middlewares.forEach((mw) => {
-      // 1. Bare unquoted name (User's preferred style): e.g. "local-only"
+      // 1. Bare exact declared name without @file (User's preferred style): e.g. "mw-security-headers"
       const bareRange = computeCompletionRangeAndText(lineContent, column, mw.id, 'list');
       suggestions.push({
         label: mw.id,
@@ -181,14 +283,14 @@ export function getTraefikSuggestions(
           endLineNumber: lineNumber,
           endColumn: bareRange.endCol,
         },
-        detail: `Traefik Middleware (${mw.type}) — локальный`,
+        detail: `Traefik Middleware (${mw.type})`,
         sortText: `0_${mw.id}`,
         documentation: {
           value: `**${mw.id}** (${mw.summary || mw.type})\n\nDefined in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`,
         },
       });
 
-      // 2. Explicit @file variant: e.g. "local-only@file"
+      // 2. Explicit @file variant: e.g. "mw-security-headers@file"
       const withFile = `${mw.id}@file`;
       const fileRange = computeCompletionRangeAndText(lineContent, column, withFile, 'list');
       suggestions.push({
@@ -207,28 +309,6 @@ export function getTraefikSuggestions(
           value: `**${withFile}** (${mw.summary || mw.type})\n\nDefined in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`,
         },
       });
-
-      // 3. If ID starts with `mw-`, also offer stripped version: e.g. "mw-security-headers" -> "security-headers"
-      if (mw.id.startsWith('mw-')) {
-        const stripped = mw.id.substring(3);
-        const stripRange = computeCompletionRangeAndText(lineContent, column, stripped, 'list');
-        suggestions.push({
-          label: stripped,
-          kind: 18, // Reference
-          insertText: stripRange.insertText,
-          range: {
-            startLineNumber: lineNumber,
-            startColumn: stripRange.startCol,
-            endLineNumber: lineNumber,
-            endColumn: stripRange.endCol,
-          },
-          detail: `Traefik Middleware (${mw.type}) — без mw-`,
-          sortText: `0_0_${stripped}`,
-          documentation: {
-            value: `**${stripped}** (${mw.summary || mw.type})\n\nDefined as **${mw.id}** in [${mw.file}:${mw.line}](file://${mw.file}#L${mw.line})`,
-          },
-        });
-      }
     });
   }
 
@@ -357,79 +437,113 @@ export function setupMonacoTraefik(monaco: any, indexer: TraefikWorkspaceIndexer
     },
   });
 
-  // 2. Monaco Go to Definition Provider (F12 / Cmd-click)
+  // 2. Monaco Go to Definition Provider (F12 / Ctrl+Click)
   monaco.languages.registerDefinitionProvider('yaml', {
     provideDefinition: (model: any, position: any) => {
-      const wordInfo = model.getWordAtPosition(position);
-      if (!wordInfo) return null;
-
       const lineContent = model.getLineContent(position.lineNumber);
-      const before = lineContent.substring(0, wordInfo.endColumn - 1);
-      const after = lineContent.substring(wordInfo.endColumn - 1);
+      const token = extractTokenAtPosition(lineContent, position.column);
+      if (!token) return null;
 
-      let fullToken = wordInfo.word;
-      if (after.startsWith('@file')) {
-        fullToken = `${wordInfo.word}@file`;
-      } else if (before.endsWith('@') || lineContent.includes(`${wordInfo.word}@file`)) {
-        fullToken = `${wordInfo.word}@file`;
-      }
-
-      const def = indexer.findDefinition(fullToken) || indexer.findDefinition(wordInfo.word);
+      const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
       if (!def) return null;
 
-      const currentPath = (window as any).ConfigStudio?.getActiveFile?.()?.path || '';
-
-      if (def.file !== currentPath && (window as any).ConfigStudio?.openFile) {
+      const cs = (window as any).ConfigStudio;
+      if (cs?.openFile) {
         setTimeout(() => {
-          (window as any).ConfigStudio.openFile(def.file, { line: def.line, highlight: true });
+          cs.openFile(def.file, { line: def.line, highlight: true });
         }, 10);
       }
 
-      if (def.file === currentPath) {
-        return {
-          uri: model.uri,
-          range: {
-            startLineNumber: def.line,
-            startColumn: 1,
-            endLineNumber: def.line,
-            endColumn: 100,
-          },
-        };
-      }
-
-      return null;
+      return {
+        uri: model.uri,
+        range: {
+          startLineNumber: def.line,
+          startColumn: 1,
+          endLineNumber: def.line,
+          endColumn: 100,
+        },
+      };
     },
   });
 
   // 3. Monaco Hover Provider for Traefik entities
   monaco.languages.registerHoverProvider?.('yaml', {
     provideHover: (model: any, position: any) => {
-      const wordInfo = model.getWordAtPosition(position);
-      if (!wordInfo) return null;
+      const lineContent = model.getLineContent(position.lineNumber);
+      const token = extractTokenAtPosition(lineContent, position.column);
+      if (!token) return null;
       const index = indexer.getIndex();
       if (!index) return null;
 
-      const token = wordInfo.word;
-      const def = indexer.findDefinition(token) || indexer.findDefinition(`${token}@file`);
+      const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
       if (!def) return null;
 
       let mdText = '';
       if (def.type === 'middleware') {
-        const cleanToken = token.replace(/@file$/, '');
         const mw =
-          index.middlewares.get(cleanToken) ||
-          index.middlewares.get(`mw-${cleanToken}`) ||
-          (cleanToken.startsWith('mw-') ? index.middlewares.get(cleanToken.substring(3)) : null);
-        mdText = `**Traefik Middleware**: \`${mw?.id || token}\`\n\n- **Type**: \`${mw?.type || 'unknown'}\`\n- **Summary**: ${mw?.summary || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})`;
+          index.middlewares.get(token.cleanRef) ||
+          index.middlewares.get(`mw-${token.cleanRef}`);
+        mdText = `**Traefik Middleware**: \`${mw?.id || token.cleanRef}\`\n\n- **Type**: \`${mw?.type || 'unknown'}\`\n- **Summary**: ${mw?.summary || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик или Ctrl+Click для перехода)*`;
       } else if (def.type === 'service') {
-        const cleanToken = token.replace(/@file$/, '');
-        const svc = index.services.get(cleanToken);
-        mdText = `**Traefik Service**: \`${svc?.id || token}\`\n\n- **Type**: \`${svc?.type || 'loadBalancer'}\`\n- **Servers**: ${svc?.servers.join(', ') || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})`;
+        const svc = index.services.get(token.cleanRef);
+        mdText = `**Traefik Service**: \`${svc?.id || token.cleanRef}\`\n\n- **Type**: \`${svc?.type || 'loadBalancer'}\`\n- **Servers**: ${svc?.servers.join(', ') || 'N/A'}\n- **Defined in**: [${def.file}:${def.line}](file://${def.file}#L${def.line})\n\n*(Двойной клик или Ctrl+Click для перехода)*`;
       }
 
       return {
         contents: [{ value: mdText }],
       };
+    },
+  });
+
+  // 4. Monaco Document Link Provider (makes references visible as clickable links)
+  monaco.languages.registerLinkProvider?.('yaml', {
+    provideLinks: (model: any) => {
+      const index = indexer.getIndex();
+      if (!index) return { links: [] };
+
+      const links: any[] = [];
+      const lineCount = model.getLineCount();
+
+      for (let i = 1; i <= lineCount; i++) {
+        const line = model.getLineContent(i);
+        if (!line.trim() || line.trim().startsWith('#')) continue;
+
+        index.middlewares.forEach((mw) => {
+          const searchTokens = [mw.id, `${mw.id}@file`];
+          for (const s of searchTokens) {
+            const idx = line.indexOf(s);
+            if (idx !== -1) {
+              links.push({
+                range: {
+                  startLineNumber: i,
+                  startColumn: idx + 1,
+                  endLineNumber: i,
+                  endColumn: idx + 1 + s.length,
+                },
+                tooltip: `Ctrl+Click: Перейти к определению ${mw.id} (${mw.file}:${mw.line})`,
+              });
+              break;
+            }
+          }
+        });
+
+        index.services.forEach((svc) => {
+          const idx = line.indexOf(svc.id);
+          if (idx !== -1 && (line.includes('service:') || line.includes('service :'))) {
+            links.push({
+              range: {
+                startLineNumber: i,
+                startColumn: idx + 1,
+                endLineNumber: i,
+                endColumn: idx + 1 + svc.id.length,
+              },
+              tooltip: `Ctrl+Click: Перейти к определению ${svc.id} (${svc.file}:${svc.line})`,
+            });
+          }
+        });
+      }
+
+      return { links };
     },
   });
 }

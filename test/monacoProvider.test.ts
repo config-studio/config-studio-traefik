@@ -4,6 +4,7 @@ import {
   computeCompletionRangeAndText,
   getYamlContext,
   getTraefikSuggestions,
+  extractTokenAtPosition,
 } from '../src/monacoProvider';
 import { TraefikIndex } from '../src/types';
 
@@ -81,18 +82,18 @@ describe('Monaco Traefik Completion & YAML Context', () => {
     assert.equal(ctx.isListItem, true);
   });
 
-  it('should prioritize bare unquoted names first, then @file variant', () => {
+  it('should prioritize exact declared names first without @file and keep @file as secondary', () => {
     const mockIndex: TraefikIndex = {
       middlewares: new Map([
         [
-          'local-only',
+          'mw-security-headers',
           {
-            id: 'local-only',
-            name: 'local-only',
+            id: 'mw-security-headers',
+            name: 'mw-security-headers',
             file: 'rules/mw-security.yml',
             line: 3,
-            type: 'ipAllowList',
-            summary: 'sourceRange: 192.168.1.0/24',
+            type: 'headers',
+            summary: 'Security Headers',
           },
         ],
       ]),
@@ -112,14 +113,44 @@ describe('Monaco Traefik Completion & YAML Context', () => {
     );
 
     assert.ok(suggestions.length >= 2);
-    // Bare unquoted name should be first
-    assert.equal(suggestions[0].label, 'local-only');
-    assert.equal(suggestions[0].insertText, 'local-only');
+    // Exact file name (without @file) should be top choice
+    assert.equal(suggestions[0].label, 'mw-security-headers');
+    assert.equal(suggestions[0].insertText, 'mw-security-headers');
     assert.ok(suggestions[0].sortText.startsWith('0_'));
 
-    // @file variant should be second
-    assert.equal(suggestions[1].label, 'local-only@file');
-    assert.equal(suggestions[1].insertText, 'local-only@file');
+    // @file variant should be secondary choice
+    assert.equal(suggestions[1].label, 'mw-security-headers@file');
+    assert.equal(suggestions[1].insertText, 'mw-security-headers@file');
     assert.ok(suggestions[1].sortText.startsWith('1_'));
+  });
+
+  it('should correctly extract full token from quoted string with @file regardless of hyphen boundaries', () => {
+    // User's exact case from screenshot: cursor on 'headers'
+    const line = '    - "mw-security-headers@file"';
+    const colOnHeaders = 22; // on 'headers'
+    const token = extractTokenAtPosition(line, colOnHeaders);
+
+    assert.ok(token);
+    assert.equal(token.rawToken, 'mw-security-headers@file');
+    assert.equal(token.cleanRef, 'mw-security-headers');
+  });
+
+  it('should correctly extract unquoted token with hyphens', () => {
+    const line = '    - mw-security-headers';
+    const colOnSecurity = 14; // on 'security'
+    const token = extractTokenAtPosition(line, colOnSecurity);
+
+    assert.ok(token);
+    assert.equal(token.rawToken, 'mw-security-headers');
+    assert.equal(token.cleanRef, 'mw-security-headers');
+  });
+
+  it('should correctly extract service token in service: line', () => {
+    const line = '      service: pcshare-service';
+    const col = 18;
+    const token = extractTokenAtPosition(line, col);
+
+    assert.ok(token);
+    assert.equal(token.cleanRef, 'pcshare-service');
   });
 });

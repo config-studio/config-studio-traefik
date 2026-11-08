@@ -1,5 +1,5 @@
 import { FsProvider, TraefikWorkspaceIndexer } from './indexer';
-import { setupMonacoTraefik } from './monacoProvider';
+import { extractTokenAtPosition, setupMonacoTraefik } from './monacoProvider';
 import { createTraefikOutlineProvider } from './outlineProvider';
 import { openMatrixModal } from './ui/matrixModal';
 import { openWizardModal } from './ui/wizardModal';
@@ -132,21 +132,83 @@ class StudioFsProvider implements FsProvider {
   // Register Monaco Outline Provider
   cs.registerOutlineProvider?.(createTraefikOutlineProvider());
 
+  function hookEditorInstance(editor: any, monacoInstance: any) {
+    if (!editor || (editor as any).__cs_traefik_hooked) return;
+    (editor as any).__cs_traefik_hooked = true;
+
+    // Double-click or Ctrl/Cmd-click on any middleware or service -> instant jump!
+    editor.onMouseDown?.((e: any) => {
+      if (e.event?.detail === 2 || e.event?.ctrlKey || e.event?.metaKey) {
+        const pos = e.target?.position;
+        if (!pos) return;
+        const model = editor.getModel?.();
+        if (!model) return;
+        const line = model.getLineContent(pos.lineNumber);
+        const token = extractTokenAtPosition(line, pos.column);
+        if (!token) return;
+
+        const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
+        if (def && cs.openFile) {
+          e.event?.preventDefault?.();
+          cs.openFile(def.file, { line: def.line, highlight: true });
+          cs.showNotification?.(`Переход к определению ${token.cleanRef} (${def.file}:${def.line})`, 'info');
+        }
+      }
+    });
+
+    // Right-Click Context Menu Action: "Traefik: Перейти к определению"
+    editor.addAction?.({
+      id: 'cs-traefik-goto-definition',
+      label: 'Traefik: Перейти к определению',
+      keybindings: monacoInstance?.KeyMod?.CtrlCmd ? [monacoInstance.KeyMod.CtrlCmd | 123, 123] : [123],
+      contextMenuGroupId: 'navigation',
+      contextMenuOrder: 1.5,
+      run: (ed: any) => {
+        const pos = ed.getPosition?.();
+        if (!pos) return;
+        const model = ed.getModel?.();
+        if (!model) return;
+        const line = model.getLineContent(pos.lineNumber);
+        const token = extractTokenAtPosition(line, pos.column);
+        if (!token) return;
+
+        const def = indexer.findDefinition(token.cleanRef) || indexer.findDefinition(token.rawToken);
+        if (def && cs.openFile) {
+          cs.openFile(def.file, { line: def.line, highlight: true });
+          cs.showNotification?.(`Переход к ${token.cleanRef} в ${def.file}:${def.line}`, 'info');
+        } else {
+          cs.showNotification?.(`Определение для '${token.cleanRef}' не найдено`, 'error');
+        }
+      },
+    });
+  }
+
   // Register Monaco Autocomplete & Go to Definition
   const monaco = cs.getMonaco?.();
   if (monaco) {
     setupMonacoTraefik(monaco, indexer);
+    const initialEditor = cs.getEditor?.();
+    if (initialEditor) hookEditorInstance(initialEditor, monaco);
   } else {
     // If Monaco loads lazily
     const checkMonaco = setInterval(() => {
       const m = cs.getMonaco?.();
       if (m) {
         setupMonacoTraefik(m, indexer);
+        const ed = cs.getEditor?.();
+        if (ed) hookEditorInstance(ed, m);
         clearInterval(checkMonaco);
       }
     }, 500);
     setTimeout(() => clearInterval(checkMonaco), 10000);
   }
+
+  // Periodically ensure current active editor instance has jump handlers
+  setInterval(() => {
+    const ed = cs.getEditor?.();
+    const m = cs.getMonaco?.();
+    if (ed) hookEditorInstance(ed, m);
+  }, 1000);
 
   // Register Toolbar Button
   cs.registerToolbarButton?.({
