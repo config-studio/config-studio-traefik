@@ -165,15 +165,39 @@ export class TraefikWorkspaceIndexer {
 
     const cleanRef = reference.replace(/@file$/, '').trim();
 
-    // Check if it's a middleware
+    // Check if it's a middleware (exact, with mw- prefix, or without mw- prefix)
     if (this.currentIndex.middlewares.has(cleanRef)) {
       const mw = this.currentIndex.middlewares.get(cleanRef)!;
       return { file: mw.file, line: mw.line, type: 'middleware' };
     }
+    if (this.currentIndex.middlewares.has(`mw-${cleanRef}`)) {
+      const mw = this.currentIndex.middlewares.get(`mw-${cleanRef}`)!;
+      return { file: mw.file, line: mw.line, type: 'middleware' };
+    }
+    if (cleanRef.startsWith('mw-') && this.currentIndex.middlewares.has(cleanRef.substring(3))) {
+      const mw = this.currentIndex.middlewares.get(cleanRef.substring(3))!;
+      return { file: mw.file, line: mw.line, type: 'middleware' };
+    }
 
-    // Check if it's a service
+    // Check if it's a service (exact, with -svc or -service suffix)
     if (this.currentIndex.services.has(cleanRef)) {
       const svc = this.currentIndex.services.get(cleanRef)!;
+      return { file: svc.file, line: svc.line, type: 'service' };
+    }
+    if (this.currentIndex.services.has(`${cleanRef}-svc`)) {
+      const svc = this.currentIndex.services.get(`${cleanRef}-svc`)!;
+      return { file: svc.file, line: svc.line, type: 'service' };
+    }
+    if (this.currentIndex.services.has(`${cleanRef}-service`)) {
+      const svc = this.currentIndex.services.get(`${cleanRef}-service`)!;
+      return { file: svc.file, line: svc.line, type: 'service' };
+    }
+    if (cleanRef.endsWith('-svc') && this.currentIndex.services.has(cleanRef.replace(/-svc$/, ''))) {
+      const svc = this.currentIndex.services.get(cleanRef.replace(/-svc$/, ''))!;
+      return { file: svc.file, line: svc.line, type: 'service' };
+    }
+    if (cleanRef.endsWith('-service') && this.currentIndex.services.has(cleanRef.replace(/-service$/, ''))) {
+      const svc = this.currentIndex.services.get(cleanRef.replace(/-service$/, ''))!;
       return { file: svc.file, line: svc.line, type: 'service' };
     }
 

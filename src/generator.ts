@@ -1,30 +1,35 @@
 import { NewServiceConfig } from './types';
 
 export function generateServiceYaml(config: NewServiceConfig): string {
-  const routerId = config.enableTls ? `${config.name}-secure` : config.name;
-  const serviceId = `${config.name}-svc`;
+  const routerId = config.enableTls ? `${config.name}-router` : config.name;
+  const serviceId = `${config.name}-service`;
 
   let mwLines = '';
   if (config.middlewares && config.middlewares.length > 0) {
-    mwLines = `      middlewares:\n` + config.middlewares.map((m) => `        - "${m}"`).join('\n') + '\n';
+    mwLines =
+      `      middlewares:\n` +
+      config.middlewares.map((m) => `        - ${m.replace(/^"|"$/g, '')}`).join('\n') +
+      '\n';
   }
 
   let tlsBlock = '';
   if (config.enableTls) {
     if (config.certResolver) {
-      tlsBlock = `      tls:\n        certResolver: "${config.certResolver}"\n`;
+      tlsBlock = `      tls:\n        certResolver: ${config.certResolver.replace(/^"|"$/g, '')}\n`;
     } else {
       tlsBlock = `      tls: {}\n`;
     }
   }
+
+  const ep = (config.entryPoint || 'websecure').replace(/^"|"$/g, '');
 
   const yaml = `http:
   routers:
     ${routerId}:
       rule: "Host(\`${config.host}\`)"
       entryPoints:
-        - "${config.entryPoint || 'websecure'}"
-${mwLines}      service: "${serviceId}"
+        - ${ep}
+${mwLines}      service: ${serviceId}
 ${tlsBlock}
   services:
     ${serviceId}:

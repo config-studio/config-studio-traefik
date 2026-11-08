@@ -18,8 +18,15 @@ export function lintTraefikIndex(index: TraefikIndex): LinterIssue[] {
 
     // Check unresolved service
     if (router.service) {
-      const cleanSvc = router.service.replace(/@file$/, '');
-      if (!index.services.has(cleanSvc)) {
+      const cleanSvc = router.service.replace(/@file$/, '').trim();
+      const hasSvc =
+        index.services.has(cleanSvc) ||
+        index.services.has(`${cleanSvc}-svc`) ||
+        index.services.has(`${cleanSvc}-service`) ||
+        (cleanSvc.endsWith('-svc') && index.services.has(cleanSvc.replace(/-svc$/, ''))) ||
+        (cleanSvc.endsWith('-service') && index.services.has(cleanSvc.replace(/-service$/, '')));
+
+      if (!hasSvc) {
         issues.push({
           severity: 'error',
           code: 'UNRESOLVED_SERVICE',
@@ -32,8 +39,13 @@ export function lintTraefikIndex(index: TraefikIndex): LinterIssue[] {
 
     // Check unresolved middlewares
     router.middlewares.forEach((mw) => {
-      const cleanMw = mw.replace(/@file$/, '');
-      if (!index.middlewares.has(cleanMw)) {
+      const cleanMw = mw.replace(/@file$/, '').trim();
+      const hasMw =
+        index.middlewares.has(cleanMw) ||
+        index.middlewares.has(`mw-${cleanMw}`) ||
+        (cleanMw.startsWith('mw-') && index.middlewares.has(cleanMw.substring(3)));
+
+      if (!hasMw) {
         issues.push({
           severity: 'error',
           code: 'UNRESOLVED_MIDDLEWARE',

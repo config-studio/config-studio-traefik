@@ -15,9 +15,10 @@ describe('Traefik Service YAML Generator', () => {
       middlewares: ['mw-local-only@file', 'mw-headers@file'],
     });
 
-    assert.match(yaml, /jellyfin-secure:/);
+    assert.match(yaml, /jellyfin-router:/);
     assert.match(yaml, /rule: "Host\(`jellyfin\.example\.com`\)"/);
-    assert.match(yaml, /certResolver: "letsencrypt"/);
+    assert.match(yaml, /certResolver: letsencrypt/);
+    assert.match(yaml, /service: jellyfin-service/);
     assert.match(yaml, /url: "http:\/\/192\.168\.1\.50:8096"/);
 
     // Verify it is parseable by parseTraefikYaml!
@@ -41,7 +42,7 @@ describe('Traefik Service YAML Generator', () => {
     });
 
     assert.doesNotMatch(yaml, /tls:/);
-    assert.match(yaml, /- "web"/);
+    assert.match(yaml, /- web/);
     assert.match(yaml, /internal-tool:/);
 
     const parsed = parseTraefikYaml(yaml, 'ser-tool.yml');
