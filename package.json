@@ -1,0 +1,17 @@
+{
+  "name": "config-studio-traefik",
+  "version": "1.0.0",
+  "description": "Traefik Dynamic Configuration & Multi-File Rules Provider Plugin for Config Studio",
+  "author": "Config Studio Team",
+  "license": "MIT",
+  "scripts": {
+    "test": "node --test dist/test/*.test.js",
+    "test:ts": "tsx --test test/*.test.ts",
+    "build": "node build.js",
+    "pack": "node pack.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "typescript": "^5.4.5"
+  }
+}

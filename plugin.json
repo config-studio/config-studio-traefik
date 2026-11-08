@@ -1,0 +1,61 @@
+{
+  "id": "traefik",
+  "name": "Traefik Dynamic Configuration",
+  "version": "1.0.0",
+  "description": "Multi-file rules directory provider, cross-file @file autocomplete, go-to-definition, rules matrix and new service wizard for Traefik",
+  "author": "Config Studio Team",
+  "icon": "network",
+  "entry": "main.js",
+  "css": "style.css",
+  "styles": ["style.css"],
+  "permissions": [
+    "fs.read",
+    "fs.write",
+    "toolbar",
+    "contextmenu",
+    "ui.panels"
+  ],
+  "fileMatches": [
+    "traefik*.yml",
+    "traefik*.yaml",
+    "mw-*.yml",
+    "mw-*.yaml",
+    "ser-*.yml",
+    "ser-*.yaml",
+    "rules/*.yml",
+    "rules/*.yaml",
+    "conf.d/*.yml",
+    "conf.d/*.yaml"
+  ],
+  "providesServices": [
+    "traefik-manager"
+  ],
+  "locales": {
+    "ru": {
+      "name": "Traefik Управление конфигурацией",
+      "description": "Поддержка multi-file каталога правил (/etc/traefik/rules/), автодополнение middlewares mw-*@file, переход к определению, матрица сервисов и проверка целостности",
+      "matrixTitle": "Матрица правил Traefik",
+      "newService": "Новый сервис",
+      "rescan": "Обновить граф",
+      "routers": "Маршрутизаторы",
+      "services": "Сервисы",
+      "middlewares": "Middlewares",
+      "allHealthy": "Все ссылки валидны",
+      "issues": "Проблемы",
+      "jumpToDefinition": "Перейти к определению"
+    },
+    "en": {
+      "name": "Traefik Dynamic Configuration",
+      "description": "Multi-file rules directory provider (/etc/traefik/rules/), cross-file @file autocomplete, go-to-definition, rules matrix and reference integrity linter",
+      "matrixTitle": "Traefik Rules Matrix",
+      "newService": "New Service",
+      "rescan": "Refresh Graph",
+      "routers": "Routers",
+      "services": "Services",
+      "middlewares": "Middlewares",
+      "allHealthy": "All References Valid",
+      "issues": "Issues",
+      "jumpToDefinition": "Go to Definition"
+    }
+  }
+}

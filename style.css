@@ -1,0 +1,747 @@
+/* ==========================================================================
+   Config Studio — Traefik Dynamic Configuration Plugin Stylesheet
+   ========================================================================== */
+
+/* --- Modal Overlay & Containers --- */
+.cs-traefik-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(15, 23, 42, 0.78);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 24px;
+  animation: csTraefikFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes csTraefikFadeIn {
+  from { opacity: 0; transform: scale(0.98); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.cs-traefik-modal {
+  background-color: #1e293b;
+  border: 1px solid rgba(51, 65, 85, 0.9);
+  border-radius: 14px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: #f8fafc;
+  max-height: 90vh;
+}
+
+.cs-traefik-modal-xl {
+  width: 1200px;
+  max-width: 95vw;
+  height: 85vh;
+}
+
+.cs-traefik-modal-lg {
+  width: 960px;
+  max-width: 95vw;
+}
+
+/* --- Modal Header --- */
+.cs-traefik-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
+  background-color: rgba(15, 23, 42, 0.6);
+  flex-shrink: 0;
+}
+
+.cs-traefik-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cs-traefik-icon-badge {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(6, 182, 212, 0.2), rgba(59, 130, 246, 0.2));
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  color: #06b6d4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-traefik-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #f8fafc;
+  margin: 0;
+}
+
+.cs-traefik-subtitle {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.cs-traefik-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* --- Buttons --- */
+.cs-traefik-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+  outline: none;
+  border: 1px solid transparent;
+}
+
+.cs-traefik-btn-primary {
+  background: linear-gradient(135deg, #0284c7, #0369a1);
+  color: #ffffff;
+  border-color: rgba(56, 189, 248, 0.4);
+  box-shadow: 0 2px 8px rgba(2, 132, 199, 0.3);
+}
+
+.cs-traefik-btn-primary:hover {
+  background: linear-gradient(135deg, #0369a1, #075985);
+  box-shadow: 0 4px 12px rgba(2, 132, 199, 0.45);
+}
+
+.cs-traefik-btn-secondary {
+  background-color: rgba(51, 65, 85, 0.6);
+  color: #e2e8f0;
+  border-color: rgba(71, 85, 105, 0.7);
+}
+
+.cs-traefik-btn-secondary:hover {
+  background-color: rgba(71, 85, 105, 0.8);
+  color: #ffffff;
+}
+
+.cs-traefik-btn-icon {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  padding: 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-traefik-btn-icon:hover {
+  background-color: rgba(51, 65, 85, 0.6);
+  color: #f8fafc;
+}
+
+/* --- Stats Metrics --- */
+.cs-traefik-stats {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  padding: 14px 20px;
+  background-color: rgba(15, 23, 42, 0.4);
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  flex-shrink: 0;
+}
+
+.cs-traefik-stat-card {
+  background-color: rgba(30, 41, 59, 0.7);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+.cs-traefik-stat-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.cs-traefik-stat-label {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+.cs-stat-error .cs-traefik-stat-val { color: #f87171; }
+.cs-stat-warn .cs-traefik-stat-val { color: #fbbf24; }
+.cs-stat-ok .cs-traefik-stat-val { color: #34d399; }
+
+/* --- Filter Bar --- */
+.cs-traefik-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  background-color: rgba(30, 41, 59, 0.4);
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.cs-traefik-search-box {
+  position: relative;
+  flex: 1;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+}
+
+.cs-traefik-search-box svg {
+  position: absolute;
+  left: 10px;
+  color: #64748b;
+  pointer-events: none;
+}
+
+.cs-traefik-search-box input {
+  width: 100%;
+  background-color: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 8px;
+  padding: 7px 12px 7px 32px;
+  font-size: 12px;
+  color: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.cs-traefik-search-box input:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+}
+
+.cs-traefik-filter-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.cs-traefik-filter-tab {
+  background: transparent;
+  border: none;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cs-traefik-filter-tab:hover {
+  color: #f8fafc;
+  background-color: rgba(51, 65, 85, 0.4);
+}
+
+.cs-traefik-filter-tab.active {
+  color: #38bdf8;
+  background-color: rgba(2, 132, 199, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.3);
+}
+
+/* --- Issues Banner --- */
+.cs-traefik-issues-banner {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+  padding: 10px 20px;
+  max-height: 120px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.cs-traefik-issues-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #f87171;
+  margin-bottom: 6px;
+}
+
+.cs-traefik-issues-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cs-traefik-issue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #fca5a5;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background-color 0.15s;
+}
+
+.cs-traefik-issue-item:hover {
+  background-color: rgba(239, 68, 68, 0.2);
+}
+
+.cs-traefik-issue-badge {
+  background-color: rgba(239, 68, 68, 0.3);
+  color: #fef2f2;
+  font-family: monospace;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.cs-traefik-issue-msg {
+  flex: 1;
+}
+
+.cs-traefik-issue-link {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+/* --- Table View --- */
+.cs-traefik-table-wrap {
+  flex: 1;
+  overflow: auto;
+}
+
+.cs-traefik-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.cs-traefik-table th {
+  position: sticky;
+  top: 0;
+  background-color: #0f172a;
+  color: #94a3b8;
+  font-weight: 600;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.cs-traefik-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+  vertical-align: middle;
+}
+
+.cs-traefik-row:hover {
+  background-color: rgba(51, 65, 85, 0.25);
+}
+
+.cs-traefik-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.cs-traefik-status-dot.ok { background-color: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.6); }
+.cs-traefik-status-dot.warn { background-color: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.6); }
+.cs-traefik-status-dot.error { background-color: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.6); }
+
+.cs-traefik-cell-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-traefik-router-name {
+  font-weight: 600;
+  color: #f8fafc;
+}
+
+.cs-traefik-file-link {
+  font-size: 11px;
+  color: #38bdf8;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.cs-traefik-file-link:hover {
+  text-decoration: underline;
+}
+
+.cs-traefik-host-text {
+  font-family: monospace;
+  font-size: 11px;
+  color: #38bdf8;
+  background-color: rgba(2, 132, 199, 0.1);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.2);
+}
+
+.cs-traefik-rule-code {
+  font-family: monospace;
+  font-size: 11px;
+  color: #cbd5e1;
+}
+
+.cs-traefik-ep-badge {
+  display: inline-block;
+  background-color: rgba(51, 65, 85, 0.6);
+  color: #e2e8f0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: monospace;
+}
+
+.cs-traefik-tls-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(16, 185, 129, 0.15);
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  color: #34d399;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.cs-traefik-http-badge {
+  background: rgba(100, 116, 139, 0.2);
+  color: #94a3b8;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.cs-traefik-backend-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cs-traefik-svc-name {
+  font-weight: 500;
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.cs-traefik-svc-name:hover {
+  color: #38bdf8;
+  text-decoration: underline;
+}
+
+.cs-traefik-backend-url {
+  font-size: 11px;
+  color: #64748b;
+  font-family: monospace;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-traefik-mw-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.cs-traefik-mw-badge {
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cs-traefik-mw-badge.valid {
+  background-color: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  color: #a5b4fc;
+}
+
+.cs-traefik-mw-badge.valid:hover {
+  background-color: rgba(99, 102, 241, 0.3);
+  color: #ffffff;
+}
+
+.cs-traefik-mw-badge.invalid {
+  background-color: rgba(239, 68, 68, 0.2);
+  border: 1px solid rgba(239, 68, 68, 0.6);
+  color: #fca5a5;
+  animation: csMwPulse 2s infinite;
+}
+
+.cs-mw-broken {
+  color: #ef4444;
+  font-weight: bold;
+  margin-left: 2px;
+}
+
+.cs-traefik-jump-btn {
+  background-color: transparent;
+  border: 1px solid rgba(56, 189, 248, 0.3);
+  color: #38bdf8;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.cs-traefik-jump-btn:hover {
+  background-color: rgba(2, 132, 199, 0.2);
+  border-color: #38bdf8;
+}
+
+/* --- Wizard Modal Form & Preview --- */
+.cs-wizard-body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  flex: 1;
+  overflow: hidden;
+}
+
+.cs-wizard-form {
+  padding: 20px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(51, 65, 85, 0.6);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cs-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.cs-form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.cs-col-6 {
+  flex: 1;
+}
+
+.cs-form-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cs-form-label-sub {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.cs-label-badge {
+  font-size: 10px;
+  background-color: rgba(51, 65, 85, 0.6);
+  color: #94a3b8;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.cs-form-input, .cs-form-select {
+  background-color: rgba(15, 23, 42, 0.7);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  color: #f8fafc;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.cs-form-input:focus, .cs-form-select:focus {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.2);
+}
+
+.cs-form-hint {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.cs-form-hint code {
+  color: #38bdf8;
+}
+
+.cs-tls-box {
+  background-color: rgba(15, 23, 42, 0.4);
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.cs-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cs-checkbox-text {
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.cs-mw-checkbox-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid rgba(51, 65, 85, 0.6);
+  border-radius: 8px;
+  padding: 6px;
+  background-color: rgba(15, 23, 42, 0.4);
+}
+
+.cs-mw-checkbox-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.cs-mw-checkbox-card:hover {
+  background-color: rgba(51, 65, 85, 0.3);
+}
+
+.cs-mw-checkbox-card.selected {
+  background-color: rgba(99, 102, 241, 0.15);
+  border-color: rgba(129, 140, 248, 0.4);
+}
+
+.cs-mw-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.cs-mw-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: #f8fafc;
+  font-family: monospace;
+}
+
+.cs-mw-type {
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+/* --- Wizard Right: Preview --- */
+.cs-wizard-preview {
+  display: flex;
+  flex-direction: column;
+  background-color: #0b1120;
+  overflow: hidden;
+}
+
+.cs-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: rgba(15, 23, 42, 0.5);
+}
+
+.cs-preview-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+}
+
+.cs-preview-badge {
+  font-size: 10px;
+  background-color: rgba(2, 132, 199, 0.2);
+  color: #38bdf8;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.cs-preview-code {
+  margin: 0;
+  padding: 16px;
+  flex: 1;
+  overflow: auto;
+  font-family: 'JetBrains Mono', Consolas, 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+
+.cs-traefik-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid rgba(51, 65, 85, 0.8);
+  background-color: rgba(15, 23, 42, 0.6);
+  flex-shrink: 0;
+}
+
+.cs-muted-box {
+  padding: 12px;
+  font-size: 11px;
+  color: #94a3b8;
+  text-align: center;
+}
+
+.cs-traefik-empty {
+  padding: 30px;
+  text-align: center;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.cs-traefik-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(6, 182, 212, 0.2);
+  border-top-color: #06b6d4;
+  border-radius: 50%;
+  animation: csTraefikSpin 0.8s linear infinite;
+}
+
+@keyframes csTraefikSpin {
+  to { transform: rotate(360deg); }
+}
+
+.cs-spin {
+  animation: csTraefikSpin 0.8s linear infinite;
+}

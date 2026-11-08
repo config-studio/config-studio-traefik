@@ -1,0 +1,139 @@
+import { lintTraefikIndex } from './linter';
+import { parseTraefikYaml } from './parser';
+import {
+  LinterIssue,
+  TraefikIndex,
+  TraefikMiddleware,
+  TraefikRouter,
+  TraefikService,
+} from './types';
+
+export interface FsProvider {
+  listFiles(): Promise<string[]>;
+  readFile(path: string): Promise<string>;
+}
+
+export class TraefikWorkspaceIndexer {
+  private fs: FsProvider;
+  private currentIndex: TraefikIndex | null = null;
+  private isScanning = false;
+
+  constructor(fs: FsProvider) {
+    this.fs = fs;
+  }
+
+  public getIndex(): TraefikIndex | null {
+    return this.currentIndex;
+  }
+
+  public async scanWorkspace(): Promise<TraefikIndex> {
+    if (this.isScanning) {
+      return (
+        this.currentIndex || {
+          middlewares: new Map(),
+          services: new Map(),
+          routers: new Map(),
+          files: [],
+          issues: [],
+          lastScanTime: Date.now(),
+        }
+      );
+    }
+
+    this.isScanning = true;
+    try {
+      const allFiles = await this.fs.listFiles();
+      // Filter for Traefik-relevant YAML files
+      const traefikFiles = allFiles.filter((f) => {
+        const lower = f.toLowerCase();
+        if (!lower.endsWith('.yml') && !lower.endsWith('.yaml')) return false;
+        const name = lower.split(/[\\/]/).pop() || '';
+        return (
+          name.startsWith('mw-') ||
+          name.startsWith('ser-') ||
+          name.startsWith('traefik') ||
+          name === 'config.yml' ||
+          name === 'config.yaml' ||
+          lower.includes('/rules/') ||
+          lower.includes('\\rules\\') ||
+          lower.includes('/conf.d/') ||
+          lower.includes('\\conf.d\\')
+        );
+      });
+
+      const middlewares = new Map<string, TraefikMiddleware>();
+      const services = new Map<string, TraefikService>();
+      const routers = new Map<string, TraefikRouter>();
+
+      // Detect rules directory (e.g. `rules` or `/etc/traefik/rules`)
+      let detectedRulesDir: string | undefined;
+      for (const f of traefikFiles) {
+        if (f.includes('/rules/') || f.includes('\\rules\\')) {
+          const idx = f.lastIndexOf('rules');
+          detectedRulesDir = f.substring(0, idx + 5);
+          break;
+        }
+      }
+
+      for (const filePath of traefikFiles) {
+        try {
+          const content = await this.fs.readFile(filePath);
+          if (!content) continue;
+
+          const parsed = parseTraefikYaml(content, filePath);
+
+          parsed.middlewares.forEach((m) => {
+            middlewares.set(m.id, m);
+          });
+
+          parsed.services.forEach((s) => {
+            services.set(s.id, s);
+          });
+
+          parsed.routers.forEach((r) => {
+            routers.set(r.id, r);
+          });
+        } catch (err) {
+          console.warn(`[TraefikIndexer] Failed to parse ${filePath}:`, err);
+        }
+      }
+
+      const index: TraefikIndex = {
+        middlewares,
+        services,
+        routers,
+        files: traefikFiles,
+        rulesDir: detectedRulesDir,
+        issues: [],
+        lastScanTime: Date.now(),
+      };
+
+      // Run Linter on the unified index
+      index.issues = lintTraefikIndex(index);
+      this.currentIndex = index;
+      return index;
+    } finally {
+      this.isScanning = false;
+    }
+  }
+
+  public findDefinition(reference: string): { file: string; line: number; type: 'middleware' | 'service' } | null {
+    if (!this.currentIndex || !reference) return null;
+
+    const cleanRef = reference.replace(/@file$/, '').trim();
+
+    // Check if it's a middleware
+    if (this.currentIndex.middlewares.has(cleanRef)) {
+      const mw = this.currentIndex.middlewares.get(cleanRef)!;
+      return { file: mw.file, line: mw.line, type: 'middleware' };
+    }
+
+    // Check if it's a service
+    if (this.currentIndex.services.has(cleanRef)) {
+      const svc = this.currentIndex.services.get(cleanRef)!;
+      return { file: svc.file, line: svc.line, type: 'service' };
+    }
+
+    return null;
+  }
+}

@@ -1,4 +1,10 @@
-﻿
+node_modules/
+dist/
+dist-pkg/
+*.cspkg
+.DS_Store
+*.log
+
 # doubled-graph
 .doubled-graph/logs/
 .doubled-graph/cache/
