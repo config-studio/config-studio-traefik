@@ -1,0 +1,6 @@
+<GracePrinciples graceVersion="4.0">
+  <Principle>Contracts precede implementation.</Principle>
+  <Principle>Verification is declared together with the module.</Principle>
+  <Principle>Code is the ground truth; artifacts follow observed reality.</Principle>
+  <Principle>Changes flow through GraceChangeSpec and GraceChangePlan.</Principle>
+</GracePrinciples>

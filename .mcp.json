@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "doubled-graph": {
+      "command": "C:\\Users\\iBella\\AppData\\Roaming\\uv\\tools\\doubled-graph\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "doubled_graph",
+        "serve"
+      ]
+    }
+  }
+}

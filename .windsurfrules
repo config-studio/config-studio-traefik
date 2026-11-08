@@ -1,0 +1,619 @@
+<!-- doubled-graph-skills:start -->
+
+# doubled-graph-after-edit
+
+# doubled-graph — после правки, до коммита
+
+**Триггер:** файл сохранён, до `git commit`. **Цель:** дрейфа нет, `.grace` цел, контракт не изменён молча.
+**Маршрут:** MCP `doubled-graph.*`; Bash — `git commit`, `<Command>` из `V-M-*`, degraded fallback.
+
+## Шаг 1 — computed graph
+
+Нет PostToolUse hook'а (`doubled-graph init-hooks`) → `doubled-graph.analyze(mode="incremental", paths=[...])`.
+
+## Шаг 2 — изменение в `.grace`
+
+Семантика изменилась (экспорт/сигнатура, зависимость `M-*`, поведение под `V-<M-id>`):
+
+1. `.grace/changes/active/C-<slug>/` — `spec.xml` (`GraceChangeSpec status="draft"` → `approved`, якорь `<C-<slug>>`, обязательные секции `Summary`/`Goals`/`Constraints`/`NonGoals`/`AcceptanceCriteria`/`AffectedAreas`/`VerificationIntent`) и `plan.xml` (`GraceChangePlan`: `IntentSummary`/`BaselineAssertions`/`TargetAssertions`/`DurableScope`/`ObservedWriteScope`/`ImplementationPlan`, задачи `<T-001>` с `Title`/`DependsOn`/`AcceptanceCriteria`/`Verification`).
+2. `.grace/graph/main.xml` — у `<M-...>` в своей `GD-*`: `Name`, `Status`, `Summary`, `Path`, `Exports`; зависимости вложенными `<M-OTHER/>` / `<DF-.../>`.
+3. `.grace/graph/index.xml` — `M-*` в `<Owns>` своего `GD-*` (один `<Path>` на маршрут).
+4. `.grace/verification/main.xml` — `<V-<M-id>>` (`Priority`/`Cwd`/`TestFiles`/`Command`/`Scenario`), затем в `<Owns>` своего `VD-*`.
+
+Якоря — теги без атрибутов; `UC-*` в GRACE 4 нет. Внутримодульная правка без смены контракта шаг пропускает.
+
+## Шаг 3 — drift
+
+`doubled-graph.detect_changes(scope="staged")`; непусто → skill `doubled-graph-drift`.
+
+## Шаг 4 — lint
+
+`doubled-graph.lint()` = `grace lint --path . --format json`. `ok:false` → правь по `{file, code, message}`. `project.grace3-detected`/`invalid-project` → `doubled-graph migrate check` → `apply`, не коммить. `GRACE_CLI_MISSING` → `doubled-graph setup`. Exit зависит от `--fail-on` (default `errors`): смотри `summary.errors`, не rc.
+
+## Шаг 5 — verification
+
+`doubled-graph verify V-<M-id>` (или `module_show(target="<M-id>", with_verification=true)`) → прогони `<Command>`. Красное — не коммить.
+
+## Шаг 6 — contract change
+
+Изменились сигнатура, `Summary`/`Exports`/зависимости `<M-...>` или `V-<M-id>` — стоп: покажи было/стало/причина/затронуто (из `impact`), сошлись на активный `C-*`, жди «ок».
+
+## Шаг 7 — коммит
+
+Gate: drift пуст, lint ок, тесты зелёные, `impact` до правки не CRITICAL (или одобрен).
+
+```
+<описание>
+
+Affected: <M-ids>
+Change: C-<slug>
+Contract-change: <M-ID> <что>   # если был
+```
+
+Коммитим код и `.grace/**`; не коммитим `.doubled-graph/{cache,logs}` и legacy `docs/*.xml`.
+
+## Anti-patterns
+
+- Без `detect_changes`/`lint` не коммитить; hook не обходить через `--no-verify`.
+- Правка `.grace` без `C-*` — изменение без бандла невидимо в истории.
+- `UC-*` и атрибуты якорей (`NAME=`, `PRIORITY=`) — синтаксис 3.x, не возвращать.
+
+## Шпаргалка
+
+```
+analyze(incremental) -> C-*/{spec,plan} + graph/verification (M-*, V-<M>, Owns)
+-> detect_changes(staged) -> lint -> <Command> of V-<M> -> contract gate
+-> commit (Affected / Change)
+```
+
+Degraded mode: `doubled-graph analyze --mode incremental --paths X`, `detect-changes --scope staged`, `lint`.
+
+# doubled-graph-before-edit
+
+# doubled-graph — перед правкой кода
+
+**Триггер:** собираешься править существующую функцию / класс / метод / файл.
+**Цель:** не сломать зависимый код, не нарушить контракт модуля, дать пользователю шанс остановить опасную правку до факта.
+
+Это обязательный risk-gate: без него правки идут «вслепую».
+
+**Маршрут:** MCP `doubled-graph.*`; Bash — только если MCP недоступен.
+
+## Шаг 1 — computed graph
+
+Если с последнего `analyze` правились файлы и в IDE нет PostToolUse hook'а (`doubled-graph init-hooks`): `doubled-graph.analyze(mode="incremental", paths=["<тронутые-файлы>"])`.
+
+## Шаг 2 — impact analysis (обязательно)
+
+```
+doubled-graph.impact(target="<символ / класс / путь>", direction="upstream", depth=3)
+```
+
+Неоднозначный символ → warning `INVALID_INPUT` с кандидатами в `detail`: покажи их, уточни `target` (`module.fn` или путь), повтори.
+
+Ответ: `risk.level` (`NONE`/`LOW`/`MEDIUM`/`HIGH`/`CRITICAL`), `risk.reasons`, `direct`/`transitive`, `affected_modules` (`M-*`), `affected_verification` (`V-M-*`), `target_resolved.module_id`.
+
+## Шаг 3 — интерпретация risk
+
+| risk.level | Действие |
+|---|---|
+| `NONE` / `LOW` | правь без дополнительного подтверждения |
+| `MEDIUM` | одной строкой: «правлю X, затрагивает N потребителей» — и продолжай |
+| `HIGH` | **стоп**, покажи `risk.reasons`, жди явного «продолжай» |
+| `CRITICAL` | **стоп**, покажи reasons + `affected_modules` + `affected_verification`, предложи альтернативу, жди «продолжай» |
+
+«Молча игнорировать HIGH/CRITICAL» — анти-паттерн: пользователь должен видеть объяснение.
+
+## Шаг 4 — режим, контракт, `.grace`
+
+Прочитай `AGENTS.md`, блок `<!-- doubled-graph:phase:start -->`. Нет файла — default `post_migration`, предупреди.
+
+1. `module_id` — из `impact().target_resolved.module_id`.
+2. Контракт и привязка файла к модулю:
+
+```
+doubled-graph.file_show(path="<file>", contracts=true)
+```
+
+`found: false` — якорей `MODULE_CONTRACT` нет (контракт не зафиксирован; правь свободнее и заведи `M-*` через skill `doubled-graph-drift`). Связь файл↔модуль в GRACE 4 — **только** `LINKS: M-*` внутри `MODULE_CONTRACT`.
+
+3. Правка ломает контракт (сигнатура, `Purpose`/`Summary`, экспорты, зависимости `M-*`) — это **новое требование**. **Стоп**, скажи: «Это contract change: нужен `C-*` бандл в `.grace/changes/active/C-<slug>/` (`spec.xml` `draft` → `approved`) и явное одобрение. Оформляем цикл — или правим в рамках текущего контракта?»
+
+**`post_migration`** — артефакты = ground-truth, контракт не нарушать без `C-*`.
+**`migration`** — код = ground-truth, после правки приведи `.grace` в соответствие (skill `doubled-graph-after-edit` шаг 2).
+
+## Шаг 5 — правка
+
+- Правишь через Edit / Write.
+- **Сохрани якоря**: `MODULE_CONTRACT`, `MODULE_MAP`, `START_CONTRACT: fn` / `END_CONTRACT: fn`, `START_BLOCK_*` / `END_BLOCK_*`. Сломанные якоря ловит `lint`.
+- `CHANGE_SUMMARY` / `LAST_CHANGE` в GRACE 4 не обязателен — историю изменения несёт `C-*` бандл; заполняй, если секция уже есть.
+
+## Шаг 6 — переход
+
+После сохранения файла активируй `doubled-graph-after-edit`. Без него правку нельзя коммитить.
+
+## Anti-patterns
+
+- Не править без `impact` — базовый risk-gate методологии.
+- Не игнорировать HIGH/CRITICAL молча.
+- Не менять `phase:` в `AGENTS.md` без просьбы пользователя.
+- Не удалять якоря «потом поправлю» — `lint` блокирует коммит.
+- Не утверждать «всех вызывающих починил» без повторного `impact`/`detect_changes`.
+
+## Шпаргалка
+
+```
+BEFORE-EDIT (MCP):
+1. analyze(incremental, paths=[touched])        # если нет hook
+2. impact(target=X, direction="upstream", depth=3)
+3. HIGH/CRITICAL -> STOP, ask user
+4. read AGENTS.md phase
+   post_migration: file_show(path=F, contracts=true); LINKS: M-*;
+                   contract change -> C-* spec (draft->approved), ask
+   migration:      свободная правка, затем .grace под факт
+5. edit (якоря целы) -> goto doubled-graph-after-edit
+```
+
+## Если инструмент недоступен
+
+- MCP нет (degraded): `doubled-graph impact <X> --direction upstream --depth 3`, `doubled-graph file show <file> --contracts`. Медленнее, результат тот же.
+- `impact` упал: предупреди «оцениваю приближённо», найди вызовы grep'ом, risk консервативно = `MEDIUM`.
+- `file show` недоступен: прочитай файл через Read и найди `MODULE_CONTRACT` / `CONTRACT` блоки руками.
+
+# doubled-graph-drift
+
+# doubled-graph — обнаружен дрейф
+
+**Триггер:** `doubled-graph.detect_changes()` вернул непустой drift.
+
+Дрейф из 5+ items — это 5+ решений; локальная модель теряет первые. **Журнал обязателен.**
+
+**Маршрут:** MCP `doubled-graph.*`; Bash — `git diff`, `git commit`.
+
+## Externalize state
+
+`.doubled-graph/drafts/drift-session-<ISO>.md`, append-only. На item: `тип`, `target`, `время`, `user-decision` (`new-req`/`bug`/`defer`), `C-*` бандл, `next`, `status`. В конце — `Status: completed`; файл не удалять.
+
+```markdown
+## item-3 (2026-10-23T10:22:04Z)
+- type: contract_mismatch   target: M-AUTH-VALIDATE
+- decision: bug             bundle: C-fix-auth-validate
+- next: вернуть сигнатуру под <M-AUTH-VALIDATE>   status: in-progress
+```
+
+## Шаг 0 — режим
+
+`AGENTS.md`, блок `<!-- doubled-graph:phase:start -->`: `migration` → § A, `post_migration` → § B (default, если файла нет).
+
+## § A. `migration` — артефакты догоняют код
+
+Каждое изменение — бандл `.grace/changes/active/C-<slug>/`: `spec.xml` (`GraceChangeSpec status="draft"` → `approved`, обязательные секции) + `plan.xml` (`GraceChangePlan`, задачи `<T-001>` с `Title`/`DependsOn`/`AcceptanceCriteria`/`Verification`).
+
+| тип | правка |
+|---|---|
+| `code_without_module` | `<M-NEW>` в `.grace/graph/main.xml` (`Name`/`Status`/`Summary`/`Path`) + `<M-NEW/>` в `<Owns>` `graph/index.xml` + `<V-M-NEW>` в `verification/main.xml` и её `<Owns>` + `LINKS: M-NEW` в коде |
+| `module_without_code` | `<Status>deprecated</Status>` (или удалить `<M-*>`, `V-<M>` и записи `Owns`) |
+| `contract_mismatch` | поправить `Summary`/`Exports`/вложенные зависимости; смена сигнатуры — отдельный `C-*` spec |
+| `stale_crosslinks` | убрать вложенный `<M-B/>` из `<M-A>` |
+| `missing_verification` | `<V-<M-id>>` — skill `doubled-graph-verify` |
+| `markup_missing` | `MODULE_CONTRACT` + `LINKS: M-*` в код; `ROLE`↔`MAP_MODE`: `RUNTIME`→`EXPORTS`, `TEST`→`LOCALS`, `BARREL`→`SUMMARY`, `CONFIG`→`NONE`, `TYPES`→`EXPORTS`, `SCRIPT`→`LOCALS` |
+
+Baseline — `doubled-graph.module_show(<M-id>)`. Ревью: `git diff .grace/`, ответ «ок, коммить» (`chore(sync): …`) или «откати X». Затем `doubled-graph-after-edit` шаг 4.
+
+## § B. `post_migration` — артефакты = ground-truth
+
+Дрейф = подозрение на баг или неодобренное требование. Разбирай **по типам**, не «refresh всё».
+
+- **`code_without_module`** — спроси: (a) новое требование → `C-*` spec `draft`→`approved`, `<M-*>` в `graph/main.xml`, `<Owns>`, `<V-<M>>`, `LINKS: M-*`; (b) баг → удалить код; (c) dev/test → в `tests/`/`dev/`; (d) не знаю → `docs/DRIFT.md`.
+- **`module_without_code`** — запись в `DRIFT.md` с живым deadline → пропусти. Иначе `<Status>deprecated</Status>` + бандл `superseded`, либо задача в `plan.xml`.
+- **`contract_mismatch`** — (a) новое требование → `C-*` spec + `Summary`/`Exports`/`V-<M-id>`, коммит с `Contract-change:`; (b) баг → вернуть код под контракт; (c) `DRIFT.md`.
+- **`stale_crosslinks`** — намеренно → убрать вложенный якорь из `<M-A>`; подозрительно → `DRIFT.md`.
+- **`missing_verification`** / `verification.placeholder` — skill `doubled-graph-verify` (`doubled-graph verify V-<M-id>`, `doubled-graph module health <M-id>`); helper → `DRIFT.md` «verification pending».
+- **`markup_missing`** — `MODULE_CONTRACT`/`MODULE_MAP` руками по комментарию языка, обязательно `LINKS: M-*`; затем `doubled-graph.lint()`.
+
+После — `detect_changes(scope="staged")`: непусто → свой пункт; пусто → `after-edit` шаг 4.
+
+## `docs/DRIFT.md`
+
+```markdown
+## D-042 — M-AUTH-VALIDATE contract_mismatch (2026-10-23)
+**Тип:** contract_mismatch. **Обнаружено:** `detect_changes()` в `abc1234`.
+**Суть:** контракт заявляет 1 аргумент, реальная сигнатура — 2.
+**До решения модуль заблокирован для ИИ-правок.** Deadline: 2026-10-27.
+```
+
+## Anti-patterns
+
+- Не «refresh всё» в `post_migration` — маскирует баги.
+- Не писать в `DRIFT.md` без явного «не знаю».
+- Не блокировать модуль без записи в `DRIFT.md`.
+- Не менять `.grace` без `C-*` и не смешивать артефакты с кодом в одном коммите.
+
+## Шпаргалка
+
+```
+read AGENTS.md phase
+migration      -> C-* + правка по таблице § A; git diff .grace/; confirm; commit chore(sync)
+post_migration -> по типу: new-req (C-* spec) | bug (code) | dev (tests/) | DRIFT.md
+                  stale_crosslinks -> убрать вложенный <M-B>
+                  missing_verification -> skill doubled-graph-verify
+                  markup_missing -> MODULE_CONTRACT + LINKS: M-* -> lint()
+-> detect_changes(staged) until empty -> after-edit step 4
+```
+
+# doubled-graph-guide
+
+# doubled-graph — обзор и навигация
+
+doubled-graph держит **два графа кода**:
+
+- **computed graph** — то, что AST-парсер (CodeGraphContext) реально находит в коде;
+- **declared graph** — то, что зафиксировано в `.grace/`: `context/*.xml`, `graph/{index,main}.xml`, `verification/{index,main}.xml`, `changes/{active,archive}/`.
+
+Расхождение графов — **дрейф**. Цель методологии — нулевой дрейф между кодом и `.grace`.
+
+## MCP-инструменты
+
+Сервер `doubled-graph` зарегистрирован в IDE: операции через MCP, не через Bash — быстрее (без subprocess), типизированный JSON.
+
+| Tool | Когда вызывать |
+|---|---|
+| `analyze` | построить/обновить computed graph (`mode="full"` или `mode="incremental"`) |
+| `impact` | **до** правки символа — blast radius, affected modules, risk level |
+| `context` | 360° view: символ + контракт + входящие/исходящие вызовы |
+| `detect_changes` | **до** коммита — дрейф между кодом и `.grace` |
+| `health` | отчёт: `artifacts` (`project_kind`, `deprecated`, `issues`), модули без `V-M-*`, drift count, открытые `DRIFT.md` |
+| `migrate_check` | read-only инвентарь миграции 3.x → 4.x (ничего не пишет) |
+| `lint` | `grace lint --path . --format json`: якоря, `Owns`-маршруты, покрытие `M-* → V-M-*` |
+| `module_show` / `module_find` | прочитать / найти `M-*` |
+| `file_show` | `MODULE_CONTRACT` / `CONTRACT:fn` / `BLOCK_*` без чтения всего файла |
+
+**Soft-failure:** lint findings, «модуль не найден», «файл без якорей» — не ошибки (`ok:false` / `found:false` со структурными деталями). Реальный сбой приходит как `{"error": "GRACE_CLI_ERROR", "detail": "rc=… "}`.
+
+## CLI движка (`grace`, pinned `@osovv/grace-cli` 4.x)
+
+| Команда | Назначение |
+|---|---|
+| `grace lint --path . --format json` | валидация `.grace` + разметки; exit зависит от `--fail-on` (default `errors`), флагов `--json` / `--verbose` нет |
+| `grace status --path . --json` | `projectKind`, `integrity`, `changes`, `derivedStates`, `nextAction`; rc=0 даже для 3.x — смотри `projectKind` |
+| `grace module show` / `find` / `health` | запись модуля, поиск, autonomy-readiness |
+| `grace verification show` / `find` | запись `V-M-*`, поиск по verification (через `doubled-graph verify` и `module health` — см. CLI ниже) |
+| `grace file show` | якоря одного файла |
+
+## CLI doubled-graph (2.0)
+
+`setup`; `migrate check|apply [--dry-run] [--no-markup-fix]`; `lint`; `module show|find|health`; `verify`; `file show`; `health`; `status` (`artifacts.project_kind`, `grace_engine`); `analyze`; `impact`; `context`; `detect-changes`; `phase get|set`; `init-hooks`; `kill-server`.
+
+## Семейство skills
+
+| Skill | Когда |
+|---|---|
+| `doubled-graph-before-edit` | до любой правки кода — impact-gate |
+| `doubled-graph-after-edit` | после правки, до коммита — `C-*` / drift / lint / verification / contract |
+| `doubled-graph-drift` | `detect_changes` вернул непустой drift |
+| `doubled-graph-manual-edit` | человек поправил код вручную, без ИИ |
+| `doubled-graph-refactor` | rename/move/split/extract — код + `.grace` + `V-M-*` |
+| `doubled-graph-verify` | у модуля нет `V-<M-id>` |
+
+Workflow'ы — markdown в системном промпте, не tool calls.
+
+## Режим методологии
+
+`AGENTS.md`, блок `<!-- doubled-graph:phase:start -->`:
+
+- **`migration`** — код = ground-truth, `.grace` догоняет; каждое изменение оформляется бандлом `.grace/changes/active/C-*`.
+- **`post_migration`** — артефакты = ground-truth; контракт нельзя нарушать без `C-*` spec с `approved`. Default, если `AGENTS.md` нет.
+
+## Базовый цикл
+
+```
+намерение править X -> before-edit (impact + risk-gate) -> правка
+-> after-edit (C-*, drift, lint, V-M-*, contract gate) -> commit
+drift -> drift; правил человек -> manual-edit;
+rename/move -> refactor; нет V-<M-id> -> verify
+```
+
+## Артефакты в одну строку
+
+`.grace/context/*` — 5 обязательных файлов (`requirements`, `technology`, `principles`, `deployment`, `ux-guidelines`, `graceVersion="4.0"`); `graph/index.xml` маршрутизирует `GD-*` → `<Path>` + `<Owns>`, якоря `M-*`/`DF-*` — в `graph/main.xml`; `V-M-*` — в `verification/main.xml`, у каждого `M-*` обязан быть `V-<M-id>`; изменения — `changes/active/C-*/{spec,plan}`, архив — `applied`/`rejected`/`cancelled`/`superseded`. Якоря — теги без атрибутов, остальные теги PascalCase.
+
+## Если что-то не работает
+
+- **MCP не отвечает**: проверь `.mcp.json`; `doubled-graph setup` пересоздаёт регистрацию.
+- **MCP недоступен**: CLI-форма того же кода — `doubled-graph impact <symbol> --direction upstream`, `analyze --mode incremental --paths X`.
+- **`grace` не установлен**: `doubled-graph setup` ставит pinned 4.x (Bun, при его отсутствии — tsx).
+- **`project.grace3-detected` / `invalid-project`**: `doubled-graph migrate check` → `migrate apply`. Без миграции `impact`/`context`/`detect_changes` читают legacy `docs/*.xml` deprecated-парсером, `setup` бутстрапит пустой `.grace`, если артефактов нет вовсе.
+
+# doubled-graph-manual-edit
+
+# doubled-graph — после ручной правки человеком
+
+**Триггер:**
+
+- пользователь говорит «я поправил X сам, посмотри»;
+- `prepare-commit-msg` hook добавил `DG-Authored: human` или `mixed`;
+- в логах появились файлы, которых ИИ не трогал.
+
+**Цель:** уважительно интегрировать ручные правки в дисциплину дрейфа — не удалять и не переписывать, но сверить с `.grace` и якорями.
+
+**Маршрут:** MCP `doubled-graph.*`.
+
+## Шаг 1 — пересчитать computed graph
+
+Если правки ещё не закоммичены (post-commit hook не сработал): `doubled-graph.analyze(mode="incremental", paths=["<изменённые-файлы>"])`. PostToolUse hook ловит только ИИ-правки, поэтому при сомнении обнови сам.
+
+## Шаг 2 — режим
+
+Прочитай `AGENTS.md` (`<!-- doubled-graph:phase:start -->`): `migration` → skill `doubled-graph-drift` § A (код = ground-truth, ручные правки тоже); `post_migration` → дальше.
+
+## Шаг 3 — drift check
+
+```
+doubled-graph.detect_changes(scope="branch", base_ref="main")
+```
+
+Именно `branch`, не `staged`: человек мог править за пределами одного коммита. Непусто → `doubled-graph-drift` § B.
+
+## Шаг 4 — якоря
+
+Ручные правки часто ломают разметку: забыт `END_BLOCK_*` после копипаста, остался `START_CONTRACT: oldName`, новый метод не попал в `MODULE_MAP`, `LINKS: M-*` стёрт.
+
+```
+doubled-graph.lint()
+```
+
+Упало — спроси:
+
+> Ручная правка нарушила разметку в N файлах: <file>: `<END_BLOCK_DECODE_JWT>` отсутствует; `<file2>`: `START_CONTRACT: oldName` указывает на удалённую функцию.
+> Починить автоматически (только якоря, без правки логики)?
+
+«Да» — правь **только якоря**, повтори `lint()`. Логику не трогай.
+
+## Шаг 5 — оформить изменение
+
+- Семантика изменилась (экспорт/сигнатура, зависимость `M-*`, поведение под `V-<M-id>`) → активный бандл `.grace/changes/active/C-<slug>/`: `spec.xml` (`GraceChangeSpec status="draft"`, `approved` после согласования) + `plan.xml` (`GraceChangePlan`, `<T-001>`…), затем правки `.grace/graph/main.xml`, `graph/index.xml` (`<Owns>`), `verification/{main,index}.xml` (`<V-<M-id>>`).
+- Ручная правка = новое требование → сначала `C-*` spec, потом `.grace`; не прячь её в правку кода.
+- `CHANGE_SUMMARY` / `LAST_CHANGE` в GRACE 4 не обязателен: провенанс несёт `C-*` плюс `DG-Authored`-трейлер. Если секция в файле уже есть — допиши `LAST_CHANGE: <ISO> — <что> (DG-Authored: human)`.
+
+## Чего НЕ делать
+
+- **Не удаляй ручные правки** «потому что не по плану»: в `migration` они источник истины, в `post_migration` — возможное новое требование, решает пользователь.
+- **Не меняй поведение кода** при фиксе разметки — только якоря.
+- **Не пиши в `docs/DRIFT.md` сам** — это для нерешённых случаев.
+- **Не утверждай «всё в порядке»** без `lint` + `detect_changes`.
+- **Не возвращай** `UC-*` и атрибуты якорей (`NAME=`, `PRIORITY=`) — синтаксис 3.x.
+
+## Шпаргалка
+
+```
+MANUAL-EDIT (MCP):
+1. analyze(mode="incremental", paths=[touched])
+2. read AGENTS.md phase -> migration? goto doubled-graph-drift § A
+3. detect_changes(scope="branch", base_ref="main") -> drift? § B
+4. lint(); сломаны якоря -> ask user -> правим только якоря
+5. .grace: C-*/{spec,plan} + graph/{main,index} + verification/{main,index}
+6. LAST_CHANGE (DG-Authored: human), если секция есть
+7. commit: Affected / Change / DG-Authored
+```
+
+# doubled-graph-refactor
+
+# doubled-graph — рефакторинг (rename / move / split / extract)
+
+**Триггер:** просьба переименовать, переместить, разделить или извлечь функцию/класс/модуль.
+**Цель:** не потерять ни одного caller'а, не разорвать якоря в `.grace`, не оставить висячих `V-M-*`.
+
+**Маршрут:** `impact()` собирает blast radius, дальше атомарные `Edit`. Финальный gate — `lint()` + `detect_changes()`.
+
+## Шаг 1 — blast radius
+
+```
+doubled-graph.impact(target="<старое-имя>", direction="upstream", depth=3)
+```
+
+`target_resolved.module_id`, `direct[]`/`transitive[]`, `affected_modules[]`, `affected_verification[]`, `risk.level`. `risk.level >= HIGH` — **стоп**, покажи `risk.reasons`, жди подтверждения.
+
+## Шаг 2 — найти все ссылки на старое имя
+
+Ручной поиск по `.grace/` и коду:
+
+```bash
+grep -rn "<старое-имя>" .grace/ src/ tests/
+```
+
+Что обновляется:
+
+- `<M-...>` в `.grace/graph/main.xml`: `Name`, `Summary`, `Path`, `Exports`;
+- вложенные якоря-зависимости `<M-OLD/>` внутри других `<M-*>` (в GRACE 4 это и есть «crosslink»);
+- `<V-<M-id>>` в `.grace/verification/main.xml` и `<Owns>` в `verification/index.xml`;
+- `<Owns>` в `.grace/graph/index.xml` (если переименовывается модуль);
+- `LINKS: M-*` и `MODULE_MAP` внутри `MODULE_CONTRACT` в код-файлах.
+
+## Шаг 3 — план пользователю
+
+```
+План рефакторинга <старое> → <новое>:
+CODE EDITS (N): src/auth/login.ts:42 (call site), src/auth/validate.ts:10 (def)
+.GRACE EDITS (M): graph/main.xml:23 (<M-AUTH> Name/Summary), graph/index.xml:8 (<Owns>),
+                  verification/main.xml:12 (<V-M-AUTH>), code: LINKS: M-AUTH
+CHANGE BUNDLE: .grace/changes/active/C-rename-auth/
+RISK: MEDIUM (12 callers, 1 affected V-<M>)
+```
+
+Жди «ок, поехали» или «откати X».
+
+## Шаг 4 — применить атомарно
+
+**Сначала код, потом `.grace`.** Упавшая посередине правка кода оставляет репо с прежним именем во всех артефактах — консистентно.
+
+Whole-word replacement через `Edit` с контекстом (сигнатура / строка вызова / тег целиком), не blind sed: sed попадёт в комментарии, строки, частичные совпадения.
+
+## Шаг 5 — `C-*` бандл
+
+`.grace/changes/active/C-<slug>/`: `spec.xml` (`GraceChangeSpec status="draft"` → `approved`, якорь `<C-<slug>>`) + `plan.xml` (`GraceChangePlan` с `<T-001>`, `<T-002>` — код, `.grace`, тесты). Переименование модуля и смена сигнатуры — отдельные задачи плана.
+
+## Шаг 6 — проверка
+
+```
+doubled-graph.analyze(mode="incremental", paths=[<все тронутые файлы>])
+doubled-graph.lint()
+doubled-graph.detect_changes(scope="staged")
+```
+
+- `lint` упал: сломаны якоря/`Owns`/ID-ссылки — найди и поправь.
+- `stale_crosslinks`: пропущен вложенный `<M-*>` в `.grace/graph/main.xml`.
+- `code_without_module`: не обновлён `Name`/`Path`/`Exports` у `<M-*>` или `LINKS: M-*` в коде.
+- `contract_mismatch`: сменилась сигнатура — это уже не rename, иди в `doubled-graph-before-edit`.
+
+## Шаг 7 — тесты и коммит
+
+Прогони `<Command>` всех `affected_verification` (`doubled-graph verify <V-M-id>`). Упало — откат `git restore` или быстрый фикс.
+
+```
+refactor: rename <старое> → <новое>
+
+Affected: <M-ids>
+Change: C-<slug>
+M-rename: M-OLD → M-NEW   # если менялся id
+```
+
+## Сложные случаи
+
+- **Move** (функция в другой модуль): обновляй ссылки на оба модуля; `Exports` и `Path` переезжают между `<M-*>`; в коде меняется `LINKS: M-*`.
+- **Split / Extract**: это не rename — новый `M-*` требует `<Owns>` + `<V-<M>>` + `C-*` spec, дальше цикл `before-edit`.
+- **Merge**: старый `M-*` → `<Status>deprecated</Status>`, его `V-<M>` удаляется, в архив — бандл со `superseded`.
+
+## Anti-patterns
+
+- Не делать blind sed/grep-replace без `impact` — пропустишь динамические ссылки, конфиги, тесты.
+- Не править только код — `detect_changes` даст `stale_crosslinks`.
+- Не править только `.grace` — дрейф наоборот.
+- Не проводить contract change (другая сигнатура) внутри rename — это `C-*` spec + approval.
+
+## Шпаргалка
+
+```
+REFACTOR (rename):
+1. impact(target=<old>, direction="upstream", depth=3); HIGH/CRITICAL -> STOP
+2. grep .grace/ src/ tests/ for <old>
+3. plan: code edits + .grace edits (+ <Owns>) + C-* bundle + risk
+4. user "ок" -> apply code first, then .grace
+5. C-*/{spec,plan}
+6. analyze + lint + detect_changes
+7. run V-<M> <Command> -> commit "refactor: …" (Affected / Change)
+Move/Split/Extract -> не rename, через doubled-graph-before-edit + C-* spec
+```
+
+# doubled-graph-verify
+
+# doubled-graph — добавить verification для модуля
+
+**Триггер:** `detect_changes()` вернул `missing_verification`; `health` показывает `modules.without_verification`; `lint` — `verification.placeholder`; пользователь сказал «добавь тесты для `M-X`».
+
+**Цель:** у каждого `M-*` есть `V-<M-id>` с реальными `Command`/`Scenario`/`TestFiles`, а не пустая заглушка.
+
+**Правило GRACE 4:** запись **одна на модуль**, id ровно `V-<M-id>` (`M-AUTH-VALIDATE` → `V-M-AUTH-VALIDATE`). Кейсы живут внутри неё как несколько `<Command>`/`<Scenario>`/`<Marker>`, а не как `V-M-AUTH-1..3`.
+
+## Шаг 1 — контракт и текущее состояние
+
+```
+doubled-graph.module_show(target="<M-id>", with_verification=true)
+doubled-graph verify V-<M-id>           # что уже есть (или not found)
+doubled-graph module health <M-id>      # чего не хватает до autonomy
+```
+
+Нужны `Status`, `Summary`, `Exports` модуля и `Priority`/`Command`/`TestFiles` существующей записи.
+
+## Шаг 2 — scope покрытия
+
+| Сигнал | Что покрыть |
+|---|---|
+| `<Priority>high</Priority>` / модуль на критическом пути | каждый публичный экспорт, все pre/post/invariant, edge cases (null, empty, oversize), error paths |
+| обычный модуль | каждый экспорт: happy path + один представительный error case |
+| helper / утилита | smoke (вызывается без исключения) + 1 happy path |
+
+`Priority` не задан — спроси пользователя и запиши ответ в `<Priority>`.
+
+## Шаг 3 — стек и путь теста
+
+Стек — `.grace/context/technology.xml` (`<TestingStack>`), затем `package.json` / `pyproject.toml` / `Cargo.toml`. Путь — по конвенции репо (`tests/test_<slug>.py`, `__tests__/<module>.test.ts`). Не нашёл — спроси.
+
+## Шаг 4 — stub теста
+
+`Edit` нового файла; в шапке `MODULE_CONTRACT` с `LINKS: M-<ID>` — единственная связь файла с модулем в GRACE 4:
+
+```python
+# START_MODULE_CONTRACT
+# MODULE: M-AUTH-VALIDATE
+# LINKS: M-AUTH-VALIDATE
+# ROLE: TEST
+# MAP_MODE: LOCALS
+# END_MODULE_CONTRACT
+```
+
+Тестируй контракт (публичные экспорты), а не internal state.
+
+## Шаг 5 — запись `V-<M-id>`
+
+В `.grace/verification/main.xml`, внутри своей `VD-*` секции:
+
+```xml
+<V-M-AUTH-VALIDATE>
+  <Priority>high</Priority>
+  <Cwd>.</Cwd>
+  <TestFiles><File>tests/test_auth_validate.py</File></TestFiles>
+  <Scenario>valid token returns user</Scenario>
+  <Scenario>invalid token returns null</Scenario>
+  <Command>pytest tests/test_auth_validate.py::test_valid_token</Command>
+  <Marker>[auth][validate][ok]</Marker>
+  <TraceAssertion>validateUser returns None, no exception</TraceAssertion>
+</V-M-AUTH-VALIDATE>
+```
+
+Плюс `<V-M-AUTH-VALIDATE/>` в `<Owns>` своего `VD-*` в `.grace/verification/index.xml`. Якорь — тег без атрибутов; `<File>` — путь от корня репо и файл обязан существовать (`verification.test-file-missing`). Если запись уже есть как пустая заглушка — **дополни** её, вторую не создавай (`projection.verification.duplicate-anchor`).
+
+## Шаг 6 — прогон
+
+`doubled-graph verify V-<M-id>` → выполни её `<Command>` через Bash (или напрямую `pytest …`). Красное не коммить.
+
+## Шаг 7 — финальные gate'ы
+
+```
+doubled-graph.lint()                          # нет missing-module-coverage / placeholder
+doubled-graph.detect_changes(scope="staged")  # missing_verification исчез для M-<ID>
+doubled-graph module health <M-id>
+```
+
+Остался `missing_verification` — записи нет вообще, создай её (шаг 5). Остался `verification.placeholder` — запись пустая, добавь `Command`/`Scenario`/`TestFiles`.
+
+## Шаг 8 — коммит
+
+```
+test: add V-<M-id> verification for <M-ID>
+
+Affected: <M-ID>
+Change: C-<slug>
+```
+
+## Anti-patterns
+
+- Не пиши тест без записи `V-<M-id>`: `lint` даст `projection.verification.missing-module-coverage`, `detect_changes` — `missing_verification`.
+- Не плоди `V-M-X-1`, `V-M-X-2` — id один, кейсы внутри записи.
+- Не выдумывай `<Command>` ради зелёного gate: `verification.placeholder` честнее фальшивого «verified».
+- Не ссылайся в `<File>` на несуществующий тест и не генерируй тесты пачкой «для всех модулей».
+
+## Шпаргалка
+
+```
+VERIFY (одна V-<M-id> на модуль):
+1. module_show(<M-id>, with_verification=true); doubled-graph verify V-<M-id>
+2. scope: high -> full; обычный -> happy+error; helper -> smoke
+3. stack <- .grace/context/technology.xml; path <- конвенция репо
+4. Edit test-file: MODULE_CONTRACT + LINKS: M-<ID> (+ ROLE/MAP_MODE)
+5. Edit verification/main.xml -> <V-<M-id>>; verification/index.xml -> <Owns>
+6. run <Command> via Bash
+7. lint() + detect_changes() чисто; doubled-graph module health <M-id>
+8. commit "test: add V-<M-id> for <M-ID>"
+```
+
+<!-- doubled-graph-skills:end -->

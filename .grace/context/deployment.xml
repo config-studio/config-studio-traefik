@@ -1,0 +1,4 @@
+<GraceDeployment graceVersion="4.0">
+  <Applicability>not-applicable</Applicability>
+  <Reason>Not configured yet; set &lt;Applicability&gt;applicable&lt;/Applicability&gt; when deployment guidance exists.</Reason>
+</GraceDeployment>

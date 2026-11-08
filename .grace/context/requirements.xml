@@ -1,0 +1,13 @@
+<GraceRequirements graceVersion="4.0">
+  <ProjectName>config-studio-traefik</ProjectName>
+  <Annotation>Created by doubled-graph setup; replace with the real product statement.</Annotation>
+  <Goals>
+    <Goal>Describe the primary product goal.</Goal>
+  </Goals>
+  <Users>
+    <User>Describe the primary users.</User>
+  </Users>
+  <Constraints>
+    <Constraint>Describe product, safety, data, or compliance constraints.</Constraint>
+  </Constraints>
+</GraceRequirements>

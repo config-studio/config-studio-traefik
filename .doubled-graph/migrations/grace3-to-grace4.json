@@ -1,0 +1,38 @@
+{
+  "root": "C:\\Users\\iBella\\.gemini\\antigravity\\scratch\\config-studio-traefik",
+  "project_kind": "none",
+  "mode": "apply",
+  "ok": false,
+  "source_documents": [],
+  "created": [
+    ".grace/context/requirements.xml",
+    ".grace/context/technology.xml",
+    ".grace/context/principles.xml",
+    ".grace/context/deployment.xml",
+    ".grace/context/ux-guidelines.xml",
+    ".grace/graph/main.xml",
+    ".grace/graph/index.xml",
+    ".grace/verification/main.xml",
+    ".grace/verification/index.xml"
+  ],
+  "kept_existing": [],
+  "markup_changed": [],
+  "markup_pending": [],
+  "map_pending": [],
+  "context_gaps": [],
+  "bom_files": [],
+  "bom_adapter_files": [],
+  "modules": 0,
+  "verifications": 0,
+  "placeholders": [],
+  "renamed_verifications": [],
+  "ambiguous_links": [],
+  "ambiguities": [],
+  "unsupported": [],
+  "issues": [],
+  "report_path": null,
+  "counts": {
+    "errors": 0,
+    "warnings": 0
+  }
+}

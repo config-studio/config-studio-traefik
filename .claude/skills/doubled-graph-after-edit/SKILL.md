@@ -1,0 +1,70 @@
+---
+name: doubled-graph-after-edit
+description: "Use AFTER any code edit, BEFORE git commit: drift check, `.grace` lint, V-M-* verification, contract-change gate; semantic edits become a C-* change bundle."
+---
+
+# doubled-graph — после правки, до коммита
+
+**Триггер:** файл сохранён, до `git commit`. **Цель:** дрейфа нет, `.grace` цел, контракт не изменён молча.
+**Маршрут:** MCP `doubled-graph.*`; Bash — `git commit`, `<Command>` из `V-M-*`, degraded fallback.
+
+## Шаг 1 — computed graph
+
+Нет PostToolUse hook'а (`doubled-graph init-hooks`) → `doubled-graph.analyze(mode="incremental", paths=[...])`.
+
+## Шаг 2 — изменение в `.grace`
+
+Семантика изменилась (экспорт/сигнатура, зависимость `M-*`, поведение под `V-<M-id>`):
+
+1. `.grace/changes/active/C-<slug>/` — `spec.xml` (`GraceChangeSpec status="draft"` → `approved`, якорь `<C-<slug>>`, обязательные секции `Summary`/`Goals`/`Constraints`/`NonGoals`/`AcceptanceCriteria`/`AffectedAreas`/`VerificationIntent`) и `plan.xml` (`GraceChangePlan`: `IntentSummary`/`BaselineAssertions`/`TargetAssertions`/`DurableScope`/`ObservedWriteScope`/`ImplementationPlan`, задачи `<T-001>` с `Title`/`DependsOn`/`AcceptanceCriteria`/`Verification`).
+2. `.grace/graph/main.xml` — у `<M-...>` в своей `GD-*`: `Name`, `Status`, `Summary`, `Path`, `Exports`; зависимости вложенными `<M-OTHER/>` / `<DF-.../>`.
+3. `.grace/graph/index.xml` — `M-*` в `<Owns>` своего `GD-*` (один `<Path>` на маршрут).
+4. `.grace/verification/main.xml` — `<V-<M-id>>` (`Priority`/`Cwd`/`TestFiles`/`Command`/`Scenario`), затем в `<Owns>` своего `VD-*`.
+
+Якоря — теги без атрибутов; `UC-*` в GRACE 4 нет. Внутримодульная правка без смены контракта шаг пропускает.
+
+## Шаг 3 — drift
+
+`doubled-graph.detect_changes(scope="staged")`; непусто → skill `doubled-graph-drift`.
+
+## Шаг 4 — lint
+
+`doubled-graph.lint()` = `grace lint --path . --format json`. `ok:false` → правь по `{file, code, message}`. `project.grace3-detected`/`invalid-project` → `doubled-graph migrate check` → `apply`, не коммить. `GRACE_CLI_MISSING` → `doubled-graph setup`. Exit зависит от `--fail-on` (default `errors`): смотри `summary.errors`, не rc.
+
+## Шаг 5 — verification
+
+`doubled-graph verify V-<M-id>` (или `module_show(target="<M-id>", with_verification=true)`) → прогони `<Command>`. Красное — не коммить.
+
+## Шаг 6 — contract change
+
+Изменились сигнатура, `Summary`/`Exports`/зависимости `<M-...>` или `V-<M-id>` — стоп: покажи было/стало/причина/затронуто (из `impact`), сошлись на активный `C-*`, жди «ок».
+
+## Шаг 7 — коммит
+
+Gate: drift пуст, lint ок, тесты зелёные, `impact` до правки не CRITICAL (или одобрен).
+
+```
+<описание>
+
+Affected: <M-ids>
+Change: C-<slug>
+Contract-change: <M-ID> <что>   # если был
+```
+
+Коммитим код и `.grace/**`; не коммитим `.doubled-graph/{cache,logs}` и legacy `docs/*.xml`.
+
+## Anti-patterns
+
+- Без `detect_changes`/`lint` не коммитить; hook не обходить через `--no-verify`.
+- Правка `.grace` без `C-*` — изменение без бандла невидимо в истории.
+- `UC-*` и атрибуты якорей (`NAME=`, `PRIORITY=`) — синтаксис 3.x, не возвращать.
+
+## Шпаргалка
+
+```
+analyze(incremental) -> C-*/{spec,plan} + graph/verification (M-*, V-<M>, Owns)
+-> detect_changes(staged) -> lint -> <Command> of V-<M> -> contract gate
+-> commit (Affected / Change)
+```
+
+Degraded mode: `doubled-graph analyze --mode incremental --paths X`, `detect-changes --scope staged`, `lint`.
