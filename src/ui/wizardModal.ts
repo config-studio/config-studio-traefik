@@ -24,7 +24,7 @@ export function openWizardModal(indexer: TraefikWorkspaceIndexer, onCreated?: (f
     entryPoint: 'websecure',
     enableTls: true,
     certResolver: 'letsencrypt',
-    middlewares: availableMiddlewares.length > 0 ? [`${availableMiddlewares[0].id}@file`] : [],
+    middlewares: availableMiddlewares.length > 0 ? [availableMiddlewares[0].id] : [],
     rulesSubdir: rulesDir,
   };
 
@@ -106,8 +106,8 @@ export function openWizardModal(indexer: TraefikWorkspaceIndexer, onCreated?: (f
                 ? availableMiddlewares
                     .map(
                       (mw) => `
-                <label class="cs-mw-checkbox-card ${state.middlewares.includes(`${mw.id}@file`) ? 'selected' : ''}">
-                  <input type="checkbox" class="cs-mw-checkbox" value="${mw.id}@file" ${state.middlewares.includes(`${mw.id}@file`) ? 'checked' : ''} />
+                <label class="cs-mw-checkbox-card ${state.middlewares.includes(mw.id) ? 'selected' : ''}">
+                  <input type="checkbox" class="cs-mw-checkbox" value="${escapeHtml(mw.id)}" ${state.middlewares.includes(mw.id) ? 'checked' : ''} />
                   <div class="cs-mw-info">
                     <div class="cs-mw-name">${escapeHtml(mw.id)}</div>
                     <div class="cs-mw-type">${escapeHtml(mw.summary || mw.type)}</div>
@@ -249,7 +249,6 @@ export function openWizardModal(indexer: TraefikWorkspaceIndexer, onCreated?: (f
           await cs.createFile(targetPath, yamlContent);
           await cs.refreshFiles?.();
           await indexer.scanWorkspace();
-          await cs.openFile(targetPath, { line: 1, highlight: true });
           cs.showNotification?.(`Сервис '${state.name}' успешно создан в ${targetPath}`, 'success');
         } else {
           // Fallback via REST API /api/fs/create & /api/fs/file

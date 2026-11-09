@@ -8,7 +8,7 @@ export function generateServiceYaml(config: NewServiceConfig): string {
   if (config.middlewares && config.middlewares.length > 0) {
     mwLines =
       `      middlewares:\n` +
-      config.middlewares.map((m) => `        - ${m.replace(/^"|"$/g, '')}`).join('\n') +
+      config.middlewares.map((m) => `        - ${m.replace(/^"|"$/g, '').replace(/@file$/, '')}`).join('\n') +
       '\n';
   }
 

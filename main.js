@@ -1337,7 +1337,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     let mwLines = "";
     if (config.middlewares && config.middlewares.length > 0) {
       mwLines = `      middlewares:
-` + config.middlewares.map((m) => `        - ${m.replace(/^"|"$/g, "")}`).join("\n") + "\n";
+` + config.middlewares.map((m) => `        - ${m.replace(/^"|"$/g, "").replace(/@file$/, "")}`).join("\n") + "\n";
     }
     let tlsBlock = "";
     if (config.enableTls) {
@@ -1388,7 +1388,7 @@ ${tlsBlock}
       entryPoint: "websecure",
       enableTls: true,
       certResolver: "letsencrypt",
-      middlewares: availableMiddlewares.length > 0 ? [`${availableMiddlewares[0].id}@file`] : [],
+      middlewares: availableMiddlewares.length > 0 ? [availableMiddlewares[0].id] : [],
       rulesSubdir: rulesDir
     };
     modal.innerHTML = `
@@ -1466,8 +1466,8 @@ ${tlsBlock}
           <div class="cs-mw-checkbox-grid">
             ${availableMiddlewares.length > 0 ? availableMiddlewares.map(
       (mw) => `
-                <label class="cs-mw-checkbox-card ${state.middlewares.includes(`${mw.id}@file`) ? "selected" : ""}">
-                  <input type="checkbox" class="cs-mw-checkbox" value="${mw.id}@file" ${state.middlewares.includes(`${mw.id}@file`) ? "checked" : ""} />
+                <label class="cs-mw-checkbox-card ${state.middlewares.includes(mw.id) ? "selected" : ""}">
+                  <input type="checkbox" class="cs-mw-checkbox" value="${escapeHtml2(mw.id)}" ${state.middlewares.includes(mw.id) ? "checked" : ""} />
                   <div class="cs-mw-info">
                     <div class="cs-mw-name">${escapeHtml2(mw.id)}</div>
                     <div class="cs-mw-type">${escapeHtml2(mw.summary || mw.type)}</div>
@@ -1586,7 +1586,6 @@ ${tlsBlock}
             await cs.createFile(targetPath, yamlContent);
             await cs.refreshFiles?.();
             await indexer.scanWorkspace();
-            await cs.openFile(targetPath, { line: 1, highlight: true });
             cs.showNotification?.(`\u0421\u0435\u0440\u0432\u0438\u0441 '${state.name}' \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u043D \u0432 ${targetPath}`, "success");
           } else {
             await fetch("/api/fs/file", {
@@ -1717,21 +1716,78 @@ ${tlsBlock}
     }
     const fs = new StudioFsProvider();
     const indexer = new TraefikWorkspaceIndexer(fs);
+    function updateEditorMarkers(editor, monacoInstance) {
+      if (!editor || !monacoInstance) return;
+      const model = editor.getModel?.();
+      if (!model) return;
+      const activeFile = cs.getActiveFile?.();
+      const filePath = (activeFile?.path || activeFile?.name || "").replace(/\\/g, "/");
+      if (!filePath.endsWith(".yml") && !filePath.endsWith(".yaml")) {
+        monacoInstance.editor?.setModelMarkers?.(model, "traefik", []);
+        return;
+      }
+      const index = indexer.getIndex();
+      if (!index || !index.issues) return;
+      const markers = [];
+      const fileName = filePath.split("/").pop() || "";
+      const fileIssues = index.issues.filter((issue) => {
+        const issueFile = issue.file.replace(/\\/g, "/");
+        const issueBase = issueFile.split("/").pop() || "";
+        return issueFile === filePath || issueFile.endsWith(filePath) || filePath.endsWith(issueFile) || issueBase === fileName;
+      });
+      fileIssues.forEach((issue) => {
+        const line = Math.max(1, Math.min(issue.line, model.getLineCount()));
+        const lineContent = model.getLineContent(line);
+        const firstNonWs = lineContent.search(/\S/);
+        const startCol = firstNonWs >= 0 ? firstNonWs + 1 : 1;
+        const endCol = Math.max(startCol + 1, lineContent.length + 1);
+        markers.push({
+          severity: issue.severity === "error" ? monacoInstance.MarkerSeverity?.Error ?? 8 : monacoInstance.MarkerSeverity?.Warning ?? 4,
+          code: issue.code,
+          message: `[Traefik Linter] ${issue.code}: ${issue.message}`,
+          startLineNumber: line,
+          startColumn: startCol,
+          endLineNumber: line,
+          endColumn: endCol
+        });
+      });
+      monacoInstance.editor?.setModelMarkers?.(model, "traefik", markers);
+    }
     indexer.scanWorkspace().then((index) => {
       console.log(
-        `[TraefikPlugin] Indexed ${index.routers.size} routers, ${index.middlewares.size} middlewares, ${index.services.size} services.`
+        `[TraefikPlugin] Indexed ${index.routers.size} routers, ${index.middlewares.size} middlewares, ${index.services.size} services, ${index.issues.length} issues.`
       );
+      const ed = cs.getEditor?.();
+      const m = cs.getMonaco?.();
+      if (ed && m) updateEditorMarkers(ed, m);
     });
     cs.onFileSave?.((file) => {
       const ext = (file?.name || file?.path || "").toLowerCase();
       if (ext.endsWith(".yml") || ext.endsWith(".yaml")) {
-        indexer.scanWorkspace();
+        indexer.scanWorkspace().then(() => {
+          const ed = cs.getEditor?.();
+          const m = cs.getMonaco?.();
+          if (ed && m) updateEditorMarkers(ed, m);
+        });
+      }
+    });
+    cs.onFileOpen?.((file) => {
+      const ext = (file?.name || file?.path || "").toLowerCase();
+      if (ext.endsWith(".yml") || ext.endsWith(".yaml")) {
+        setTimeout(() => {
+          const ed = cs.getEditor?.();
+          const m = cs.getMonaco?.();
+          if (ed && m) updateEditorMarkers(ed, m);
+        }, 150);
       }
     });
     cs.registerOutlineProvider?.(createTraefikOutlineProvider());
     function hookEditorInstance(editor, monacoInstance) {
       if (!editor || editor.__cs_traefik_hooked) return;
       editor.__cs_traefik_hooked = true;
+      editor.onDidChangeModel?.(() => {
+        updateEditorMarkers(editor, monacoInstance);
+      });
       editor.onMouseDown?.((e) => {
         if (e.event?.detail === 2 || e.event?.ctrlKey || e.event?.metaKey) {
           const pos = e.target?.position;
@@ -1793,8 +1849,11 @@ ${tlsBlock}
     setInterval(() => {
       const ed = cs.getEditor?.();
       const m = cs.getMonaco?.();
-      if (ed) hookEditorInstance(ed, m);
-    }, 1e3);
+      if (ed) {
+        hookEditorInstance(ed, m);
+        updateEditorMarkers(ed, m);
+      }
+    }, 2e3);
     cs.registerToolbarButton?.({
       id: "cs-btn-traefik-matrix",
       pluginId: "traefik",

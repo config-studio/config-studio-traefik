@@ -114,18 +114,86 @@ class StudioFsProvider implements FsProvider {
   const fs = new StudioFsProvider();
   const indexer = new TraefikWorkspaceIndexer(fs);
 
+  // Update Monaco Editor Markers (Red/Yellow squigglies for Linter issues)
+  function updateEditorMarkers(editor: any, monacoInstance: any) {
+    if (!editor || !monacoInstance) return;
+    const model = editor.getModel?.();
+    if (!model) return;
+    const activeFile = cs.getActiveFile?.();
+    const filePath = (activeFile?.path || activeFile?.name || '').replace(/\\/g, '/');
+    if (!filePath.endsWith('.yml') && !filePath.endsWith('.yaml')) {
+      monacoInstance.editor?.setModelMarkers?.(model, 'traefik', []);
+      return;
+    }
+
+    const index = indexer.getIndex();
+    if (!index || !index.issues) return;
+
+    const markers: any[] = [];
+    const fileName = filePath.split('/').pop() || '';
+
+    // Find issues for the current file
+    const fileIssues = index.issues.filter((issue) => {
+      const issueFile = issue.file.replace(/\\/g, '/');
+      const issueBase = issueFile.split('/').pop() || '';
+      return issueFile === filePath || issueFile.endsWith(filePath) || filePath.endsWith(issueFile) || issueBase === fileName;
+    });
+
+    fileIssues.forEach((issue) => {
+      const line = Math.max(1, Math.min(issue.line, model.getLineCount()));
+      const lineContent = model.getLineContent(line);
+      const firstNonWs = lineContent.search(/\S/);
+      const startCol = firstNonWs >= 0 ? firstNonWs + 1 : 1;
+      const endCol = Math.max(startCol + 1, lineContent.length + 1);
+
+      markers.push({
+        severity:
+          issue.severity === 'error'
+            ? monacoInstance.MarkerSeverity?.Error ?? 8
+            : monacoInstance.MarkerSeverity?.Warning ?? 4,
+        code: issue.code,
+        message: `[Traefik Linter] ${issue.code}: ${issue.message}`,
+        startLineNumber: line,
+        startColumn: startCol,
+        endLineNumber: line,
+        endColumn: endCol,
+      });
+    });
+
+    monacoInstance.editor?.setModelMarkers?.(model, 'traefik', markers);
+  }
+
   // Initial Scan
   indexer.scanWorkspace().then((index) => {
     console.log(
-      `[TraefikPlugin] Indexed ${index.routers.size} routers, ${index.middlewares.size} middlewares, ${index.services.size} services.`
+      `[TraefikPlugin] Indexed ${index.routers.size} routers, ${index.middlewares.size} middlewares, ${index.services.size} services, ${index.issues.length} issues.`
     );
+    const ed = cs.getEditor?.();
+    const m = cs.getMonaco?.();
+    if (ed && m) updateEditorMarkers(ed, m);
   });
 
   // Re-scan when files are saved
   cs.onFileSave?.((file: any) => {
     const ext = (file?.name || file?.path || '').toLowerCase();
     if (ext.endsWith('.yml') || ext.endsWith('.yaml')) {
-      indexer.scanWorkspace();
+      indexer.scanWorkspace().then(() => {
+        const ed = cs.getEditor?.();
+        const m = cs.getMonaco?.();
+        if (ed && m) updateEditorMarkers(ed, m);
+      });
+    }
+  });
+
+  // Re-check markers when new file is opened
+  cs.onFileOpen?.((file: any) => {
+    const ext = (file?.name || file?.path || '').toLowerCase();
+    if (ext.endsWith('.yml') || ext.endsWith('.yaml')) {
+      setTimeout(() => {
+        const ed = cs.getEditor?.();
+        const m = cs.getMonaco?.();
+        if (ed && m) updateEditorMarkers(ed, m);
+      }, 150);
     }
   });
 
@@ -135,6 +203,10 @@ class StudioFsProvider implements FsProvider {
   function hookEditorInstance(editor: any, monacoInstance: any) {
     if (!editor || (editor as any).__cs_traefik_hooked) return;
     (editor as any).__cs_traefik_hooked = true;
+
+    editor.onDidChangeModel?.(() => {
+      updateEditorMarkers(editor, monacoInstance);
+    });
 
     // Double-click or Ctrl/Cmd-click on any middleware or service -> instant jump!
     editor.onMouseDown?.((e: any) => {
@@ -203,12 +275,15 @@ class StudioFsProvider implements FsProvider {
     setTimeout(() => clearInterval(checkMonaco), 10000);
   }
 
-  // Periodically ensure current active editor instance has jump handlers
+  // Periodically ensure current active editor instance has jump handlers and up-to-date markers
   setInterval(() => {
     const ed = cs.getEditor?.();
     const m = cs.getMonaco?.();
-    if (ed) hookEditorInstance(ed, m);
-  }, 1000);
+    if (ed) {
+      hookEditorInstance(ed, m);
+      updateEditorMarkers(ed, m);
+    }
+  }, 2000);
 
   // Register Toolbar Button
   cs.registerToolbarButton?.({

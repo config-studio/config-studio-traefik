@@ -25,7 +25,7 @@ describe('Traefik Service YAML Generator', () => {
     const parsed = parseTraefikYaml(yaml, 'ser-jellyfin.yml');
     assert.equal(parsed.routers.length, 1);
     assert.equal(parsed.routers[0].host, 'jellyfin.example.com');
-    assert.deepEqual(parsed.routers[0].middlewares, ['mw-local-only@file', 'mw-headers@file']);
+    assert.deepEqual(parsed.routers[0].middlewares, ['mw-local-only', 'mw-headers']);
     assert.equal(parsed.services.length, 1);
     assert.deepEqual(parsed.services[0].servers, ['http://192.168.1.50:8096']);
   });
