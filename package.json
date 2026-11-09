@@ -12,6 +12,7 @@
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
+    "tsx": "^4.7.1",
     "typescript": "^5.4.5"
   }
 }
