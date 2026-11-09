@@ -195,3 +195,72 @@ export async function queryTraefikApi(
     return result;
   }
 }
+
+export interface RemoteSshStatus {
+  checked: boolean;
+  available: boolean;
+  hostId?: string;
+  command?: string;
+  exitCode?: number;
+  stdout?: string;
+  stderr?: string;
+  durationMs?: number;
+  error?: string;
+}
+
+/**
+ * Executes remote Traefik Doctor commands (traefik healthcheck, traefik version)
+ * via the core non-interactive SSH Exec endpoint POST /api/ssh/exec.
+ * If backend endpoint is not yet available, returns graceful status.
+ */
+export async function executeRemoteDoctorSsh(
+  hostId: string,
+  command: string = 'docker exec traefik traefik healthcheck || traefik version',
+  fetchFn: typeof fetch = fetch
+): Promise<RemoteSshStatus> {
+  const result: RemoteSshStatus = {
+    checked: true,
+    available: false,
+    hostId,
+    command,
+  };
+
+  try {
+    const res = await fetchFn('/api/ssh/exec', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-ConfigStudio-Web': '1',
+      },
+      body: JSON.stringify({
+        hostId,
+        cmd: command,
+        timeoutSec: 10,
+      }),
+    });
+
+    if (res.status === 404 || res.status === 501) {
+      result.error =
+        'Эндпоинт ядра POST /api/ssh/exec не поддерживается текущей версией сервера (запланирован в спринте v2.3 ядра).';
+      return result;
+    }
+
+    if (!res.ok) {
+      const errText = await res.text();
+      result.error = `HTTP ${res.status}: ${errText}`;
+      return result;
+    }
+
+    const data = (await res.json()) as any;
+    result.available = true;
+    result.exitCode = data.exitCode;
+    result.stdout = data.stdout;
+    result.stderr = data.stderr;
+    result.durationMs = data.durationMs;
+    return result;
+  } catch (err: any) {
+    result.error = err?.message || String(err);
+    return result;
+  }
+}
+

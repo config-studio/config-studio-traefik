@@ -1,4 +1,4 @@
-import { queryTraefikApi, runLocalAudit, TraefikDoctorReport } from '../doctor';
+import { executeRemoteDoctorSsh, queryTraefikApi, RemoteSshStatus, runLocalAudit, TraefikDoctorReport } from '../doctor';
 import { TraefikWorkspaceIndexer } from '../indexer';
 
 export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?: () => void) {
@@ -15,6 +15,14 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
   const defaultApiUrl = localStorage.getItem('cs_traefik_api_url') || 'http://localhost:8080';
   let report: TraefikDoctorReport = runLocalAudit(indexer.getIndex());
   let isCheckingApi = false;
+  let activeDiagMode: 'api' | 'ssh' = 'api';
+  let remoteSshStatus: RemoteSshStatus = {
+    checked: false,
+    available: false,
+    hostId: localStorage.getItem('cs_traefik_ssh_host') || 'localhost',
+    command: localStorage.getItem('cs_traefik_ssh_cmd') || 'docker exec traefik traefik healthcheck',
+  };
+  let isExecutingSsh = false;
 
   function render() {
     const cs = (window as any).ConfigStudio;
@@ -147,15 +155,29 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
           }
         </div>
 
-        <!-- Section 2: Traefik REST API Health -->
+        <!-- Section 2: Runtime Diagnostics (REST API & Remote SSH Exec) -->
         <div class="cs-doctor-section" style="margin-top: 20px;">
           <div class="cs-section-header">
             <div class="cs-section-title">
               <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
-              Traefik REST API & Runtime Health Check
+              Диагностика рантайма Traefik
             </div>
+            <div class="cs-traefik-filter-tabs">
+              <button id="cs-diag-tab-api" class="cs-traefik-filter-tab ${activeDiagMode === 'api' ? 'active' : ''}">
+                REST API (8080)
+              </button>
+              <button id="cs-diag-tab-ssh" class="cs-traefik-filter-tab ${activeDiagMode === 'ssh' ? 'active' : ''}">
+                Remote SSH Exec
+              </button>
+            </div>
+          </div>
+
+          ${
+            activeDiagMode === 'api'
+              ? `
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 10px;">
             <div class="cs-api-input-wrap">
               <input type="text" id="cs-doctor-api-url" class="cs-api-input" value="${escapeHtml(
                 apiStatus.url || defaultApiUrl
@@ -260,6 +282,64 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
             `
             }
           </div>
+          `
+              : `
+          <div class="cs-ssh-exec-box">
+            <div class="cs-ssh-inputs-row" style="display: flex; gap: 8px; margin-bottom: 12px;">
+              <input type="text" id="cs-doctor-ssh-host" class="cs-api-input" style="width: 170px;" value="${escapeHtml(
+                remoteSshStatus.hostId || 'localhost'
+              )}" placeholder="Host ID / localhost" title="ID узла из флота серверов или localhost" />
+              <input type="text" id="cs-doctor-ssh-cmd" class="cs-api-input" style="flex: 1;" value="${escapeHtml(
+                remoteSshStatus.command || 'docker exec traefik traefik healthcheck'
+              )}" placeholder="docker exec traefik traefik healthcheck" />
+              <button id="cs-doctor-run-ssh-btn" class="cs-traefik-btn cs-traefik-btn-primary" ${
+                isExecutingSsh ? 'disabled' : ''
+              }>
+                ${isExecutingSsh ? 'Выполнение...' : 'Запустить SSH Exec'}
+              </button>
+            </div>
+
+            ${
+              !remoteSshStatus.checked
+                ? `
+              <div class="cs-doctor-hint-box">
+                <svg width="18" height="18" fill="none" stroke="#38bdf8" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>Удаленная проверка конфигурации и здоровья контейнера Traefik через неинтерактивный эндпоинт ядра <code>POST /api/ssh/exec</code>. Выполняет <code>traefik healthcheck</code> или <code>traefik version</code> на удаленном сервере.</span>
+              </div>
+            `
+                : remoteSshStatus.available
+                ? `
+              <div class="cs-runtime-ok-alert" style="margin-bottom: 8px;">
+                Команда успешно выполнена на узле <strong>${escapeHtml(
+                  remoteSshStatus.hostId || ''
+                )}</strong> (Код возврата: ${remoteSshStatus.exitCode}, Время: ${remoteSshStatus.durationMs}ms)
+              </div>
+              <pre class="cs-preview-code" style="max-height: 200px; background: rgba(15, 23, 42, 0.8); border: 1px solid rgba(51, 65, 85, 0.6); border-radius: 6px;"><code>${escapeHtml(
+                remoteSshStatus.stdout || remoteSshStatus.stderr || 'No output'
+              )}</code></pre>
+            `
+                : `
+              <div class="cs-api-error-card">
+                <div class="cs-error-icon">
+                  <svg width="24" height="24" fill="none" stroke="#f59e0b" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="cs-error-title" style="color: #fbbf24;">Эндпоинт POST /api/ssh/exec пока не активен в ядре</div>
+                  <div class="cs-error-desc">${escapeHtml(remoteSshStatus.error || '')}</div>
+                  <div class="cs-error-hint">
+                    Клиентский вызов полностью реализован в расширении Traefik. Как только бэкенд ядра Config Studio добавит сервис <code>ExecuteCommand</code> (запланирован в спринте ядра v2.3), удаленный SSH-аудит заработает автоматически.
+                  </div>
+                </div>
+              </div>
+            `
+            }
+          </div>
+          `
+          }
         </div>
       </div>
 
@@ -299,6 +379,51 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) close();
+    });
+
+    // Diagnostic Mode Tabs (API vs Remote SSH Exec)
+    modal.querySelector('#cs-diag-tab-api')?.addEventListener('click', () => {
+      if (activeDiagMode !== 'api') {
+        activeDiagMode = 'api';
+        render();
+      }
+    });
+
+    modal.querySelector('#cs-diag-tab-ssh')?.addEventListener('click', () => {
+      if (activeDiagMode !== 'ssh') {
+        activeDiagMode = 'ssh';
+        render();
+      }
+    });
+
+    // Run SSH Exec button
+    modal.querySelector('#cs-doctor-run-ssh-btn')?.addEventListener('click', async () => {
+      const hostInput = modal.querySelector('#cs-doctor-ssh-host') as HTMLInputElement;
+      const cmdInput = modal.querySelector('#cs-doctor-ssh-cmd') as HTMLInputElement;
+      const hostId = hostInput?.value.trim() || 'localhost';
+      const cmd = cmdInput?.value.trim() || 'docker exec traefik traefik healthcheck';
+
+      localStorage.setItem('cs_traefik_ssh_host', hostId);
+      localStorage.setItem('cs_traefik_ssh_cmd', cmd);
+
+      isExecutingSsh = true;
+      render();
+
+      try {
+        const res = await executeRemoteDoctorSsh(hostId, cmd);
+        remoteSshStatus = res;
+      } catch (err: any) {
+        remoteSshStatus = {
+          checked: true,
+          available: false,
+          hostId,
+          command: cmd,
+          error: err?.message || String(err),
+        };
+      } finally {
+        isExecutingSsh = false;
+        render();
+      }
     });
 
     // Rescan button

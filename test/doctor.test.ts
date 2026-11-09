@@ -120,4 +120,46 @@ describe('Traefik Doctor & Diagnostics', () => {
     assert.equal(apiStatus.reachable, false);
     assert.match(apiStatus.error || '', /ECONNREFUSED/);
   });
+
+  it('should gracefully handle inactive or pending POST /api/ssh/exec backend endpoint', async () => {
+    const { executeRemoteDoctorSsh } = require('../src/doctor');
+
+    // Simulate backend returning 404 (endpoint not yet wired in Go backend)
+    const mock404Fetch = async () => {
+      return {
+        ok: false,
+        status: 404,
+        text: async () => '404 page not found',
+      } as any;
+    };
+
+    const res = await executeRemoteDoctorSsh('prod-traefik-01', 'traefik version', mock404Fetch as any);
+    assert.equal(res.checked, true);
+    assert.equal(res.available, false);
+    assert.match(res.error || '', /POST \/api\/ssh\/exec/);
+  });
+
+  it('should successfully parse exit code and stdout when POST /api/ssh/exec is active', async () => {
+    const { executeRemoteDoctorSsh } = require('../src/doctor');
+
+    const mock200Fetch = async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          exitCode: 0,
+          stdout: 'Version: 3.1.2\nCodename: parihaka\nOK: traefik healthcheck passed',
+          stderr: '',
+          durationMs: 145,
+        }),
+      } as any;
+    };
+
+    const res = await executeRemoteDoctorSsh('prod-traefik-01', 'traefik healthcheck', mock200Fetch as any);
+    assert.equal(res.checked, true);
+    assert.equal(res.available, true);
+    assert.equal(res.exitCode, 0);
+    assert.match(res.stdout || '', /traefik healthcheck passed/);
+    assert.equal(res.durationMs, 145);
+  });
 });
