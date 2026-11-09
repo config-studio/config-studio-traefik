@@ -4,12 +4,18 @@ export interface ParseResult {
   middlewares: TraefikMiddleware[];
   routers: TraefikRouter[];
   services: TraefikService[];
+  sectionLines?: {
+    routers?: number;
+    services?: number;
+    middlewares?: number;
+  };
 }
 
 export function parseTraefikYaml(yamlContent: string, filePath: string): ParseResult {
   const middlewares: TraefikMiddleware[] = [];
   const routers: TraefikRouter[] = [];
   const services: TraefikService[] = [];
+  const sectionLines: { routers?: number; services?: number; middlewares?: number } = {};
 
   const lines = yamlContent.split(/\r?\n/);
 
@@ -92,6 +98,9 @@ export function parseTraefikYaml(yamlContent: string, filePath: string): ParseRe
       finalizeCurrentItem();
       const match = trimmed.match(/^(routers|services|middlewares)/);
       currentSection = match ? (match[1] as any) : null;
+      if (currentSection) {
+        sectionLines[currentSection] = lineNumber;
+      }
       sectionIndent = indent;
       itemIndent = -1;
       continue;
@@ -243,7 +252,7 @@ export function parseTraefikYaml(yamlContent: string, filePath: string): ParseRe
 
   finalizeCurrentItem();
 
-  return { middlewares, routers, services };
+  return { middlewares, routers, services, sectionLines };
 }
 
 function cleanQuote(str: string): string {

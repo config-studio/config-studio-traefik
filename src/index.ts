@@ -197,8 +197,13 @@ class StudioFsProvider implements FsProvider {
     }
   });
 
-  // Register Monaco Outline Provider
-  cs.registerOutlineProvider?.(createTraefikOutlineProvider());
+  // Register Monaco Outline Provider for both yaml and yml
+  const outlineProvider = createTraefikOutlineProvider();
+  cs.registerOutlineProvider?.(outlineProvider);
+  cs.registerOutlineProvider?.({
+    ...outlineProvider,
+    language: 'yml',
+  });
 
   function hookEditorInstance(editor: any, monacoInstance: any) {
     if (!editor || (editor as any).__cs_traefik_hooked) return;

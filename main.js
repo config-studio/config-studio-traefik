@@ -89,6 +89,7 @@ var ConfigStudioTraefikPlugin = (() => {
     const middlewares = [];
     const routers = [];
     const services = [];
+    const sectionLines = {};
     const lines = yamlContent.split(/\r?\n/);
     let currentSection = null;
     let currentItem = null;
@@ -152,6 +153,9 @@ var ConfigStudioTraefikPlugin = (() => {
         finalizeCurrentItem();
         const match = trimmed.match(/^(routers|services|middlewares)/);
         currentSection = match ? match[1] : null;
+        if (currentSection) {
+          sectionLines[currentSection] = lineNumber;
+        }
         sectionIndent = indent;
         itemIndent = -1;
         continue;
@@ -279,7 +283,7 @@ var ConfigStudioTraefikPlugin = (() => {
       }
     }
     finalizeCurrentItem();
-    return { middlewares, routers, services };
+    return { middlewares, routers, services, sectionLines };
   }
   function cleanQuote(str) {
     if (!str) return "";
@@ -937,67 +941,110 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     return {
       language: "yaml",
       parse: (content, filename) => {
-        const lower = filename.toLowerCase();
-        const isTraefik = lower.includes("traefik") || lower.includes("/rules/") || lower.includes("\\rules\\") || lower.split(/[\\/]/).pop()?.startsWith("mw-") || lower.split(/[\\/]/).pop()?.startsWith("ser-");
-        if (!isTraefik && !content.includes("http:")) {
+        const lower = (filename || "").toLowerCase().replace(/\\/g, "/");
+        const baseName = lower.split("/").pop() || "";
+        const isTraefikCandidate = lower.includes("traefik") || lower.includes("/rules/") || lower.startsWith("rules/") || baseName.startsWith("mw-") || baseName.startsWith("ser-") || content.includes("routers:") || content.includes("middlewares:") || content.includes("http:") && (content.includes("services:") || content.includes("middlewares:"));
+        if (!isTraefikCandidate) {
           return [];
         }
         const parsed = parseTraefikYaml(content, filename);
+        if (parsed.routers.length === 0 && parsed.services.length === 0 && parsed.middlewares.length === 0) {
+          return [];
+        }
         const rootNodes = [];
         if (parsed.routers.length > 0) {
+          const title = `\u{1F310} \u041C\u0430\u0440\u0448\u0440\u0443\u0442\u0438\u0437\u0430\u0442\u043E\u0440\u044B (${parsed.routers.length})`;
+          const line = parsed.sectionLines?.routers || (parsed.routers[0].line > 1 ? parsed.routers[0].line - 1 : 1);
           rootNodes.push({
             id: "section_routers",
-            name: `\u{1F310} \u041C\u0430\u0440\u0448\u0440\u0443\u0442\u0438\u0437\u0430\u0442\u043E\u0440\u044B (${parsed.routers.length})`,
+            label: title,
+            name: title,
+            type: "section",
             kind: "section",
-            line: parsed.routers[0].line > 1 ? parsed.routers[0].line - 1 : 1,
-            children: parsed.routers.map((r) => ({
-              id: `router_${r.id}`,
-              name: `${r.id} ${r.host ? `[${r.host}]` : ""}`,
-              kind: "function",
-              line: r.line,
-              children: [
-                ...r.middlewares.map((mw) => ({
+            line,
+            children: parsed.routers.map((r) => {
+              const rTitle = `${r.id} ${r.host ? `[${r.host}]` : ""}`.trim();
+              const childNodes = [];
+              for (const mw of r.middlewares) {
+                const mwTitle = `\u{1F6E1}\uFE0F ${mw}`;
+                childNodes.push({
                   id: `router_${r.id}_mw_${mw}`,
-                  name: `\u{1F6E1}\uFE0F ${mw}`,
-                  kind: "string",
+                  label: mwTitle,
+                  name: mwTitle,
+                  type: "middleware",
+                  kind: "middleware",
                   line: r.middlewareLines?.[mw] || r.line
-                })),
-                ...r.service ? [{
+                });
+              }
+              if (r.service) {
+                const svcTitle = `\u2699\uFE0F ${r.service}`;
+                childNodes.push({
                   id: `router_${r.id}_svc_${r.service}`,
-                  name: `\u2699\uFE0F ${r.service}`,
-                  kind: "string",
+                  label: svcTitle,
+                  name: svcTitle,
+                  type: "service",
+                  kind: "service",
                   line: r.serviceLine || r.line
-                }] : []
-              ]
-            }))
+                });
+              }
+              return {
+                id: `router_${r.id}`,
+                label: rTitle,
+                name: rTitle,
+                type: "router",
+                kind: "router",
+                line: r.line,
+                children: childNodes.length > 0 ? childNodes : void 0
+              };
+            })
           });
         }
         if (parsed.services.length > 0) {
+          const title = `\u2699\uFE0F \u0421\u0435\u0440\u0432\u0438\u0441\u044B (${parsed.services.length})`;
+          const line = parsed.sectionLines?.services || (parsed.services[0].line > 1 ? parsed.services[0].line - 1 : 1);
           rootNodes.push({
             id: "section_services",
-            name: `\u2699\uFE0F \u0421\u0435\u0440\u0432\u0438\u0441\u044B (${parsed.services.length})`,
+            label: title,
+            name: title,
+            type: "section",
             kind: "section",
-            line: parsed.services[0].line > 1 ? parsed.services[0].line - 1 : 1,
-            children: parsed.services.map((s) => ({
-              id: `svc_${s.id}`,
-              name: `${s.id} ${s.servers.length > 0 ? `(${s.servers[0]})` : ""}`,
-              kind: "class",
-              line: s.line
-            }))
+            line,
+            children: parsed.services.map((s) => {
+              const serverInfo = s.servers.length > 0 ? `(${s.servers[0]})` : "";
+              const sTitle = `${s.id} ${serverInfo}`.trim();
+              return {
+                id: `svc_${s.id}`,
+                label: sTitle,
+                name: sTitle,
+                type: "service",
+                kind: "service",
+                line: s.line
+              };
+            })
           });
         }
         if (parsed.middlewares.length > 0) {
+          const title = `\u{1F6E1}\uFE0F Middlewares (${parsed.middlewares.length})`;
+          const line = parsed.sectionLines?.middlewares || (parsed.middlewares[0].line > 1 ? parsed.middlewares[0].line - 1 : 1);
           rootNodes.push({
             id: "section_middlewares",
-            name: `\u{1F6E1}\uFE0F Middlewares (${parsed.middlewares.length})`,
+            label: title,
+            name: title,
+            type: "section",
             kind: "section",
-            line: parsed.middlewares[0].line > 1 ? parsed.middlewares[0].line - 1 : 1,
-            children: parsed.middlewares.map((m) => ({
-              id: `mw_${m.id}`,
-              name: `${m.id} [${m.summary || m.type}]`,
-              kind: "object",
-              line: m.line
-            }))
+            line,
+            children: parsed.middlewares.map((m) => {
+              const desc = m.summary || m.type;
+              const mTitle = `${m.id} [${desc}]`;
+              return {
+                id: `mw_${m.id}`,
+                label: mTitle,
+                name: mTitle,
+                type: "middleware",
+                kind: "middleware",
+                line: m.line
+              };
+            })
           });
         }
         return rootNodes;
@@ -1781,7 +1828,12 @@ ${tlsBlock}
         }, 150);
       }
     });
-    cs.registerOutlineProvider?.(createTraefikOutlineProvider());
+    const outlineProvider = createTraefikOutlineProvider();
+    cs.registerOutlineProvider?.(outlineProvider);
+    cs.registerOutlineProvider?.({
+      ...outlineProvider,
+      language: "yml"
+    });
     function hookEditorInstance(editor, monacoInstance) {
       if (!editor || editor.__cs_traefik_hooked) return;
       editor.__cs_traefik_hooked = true;
