@@ -1,6 +1,6 @@
 {
   "name": "config-studio-traefik",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Traefik Dynamic Configuration & Multi-File Rules Provider Plugin for Config Studio",
   "author": "Config Studio Team",
   "license": "MIT",

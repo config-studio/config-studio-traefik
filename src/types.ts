@@ -70,3 +70,31 @@ export interface NewServiceConfig {
   middlewares: string[];
   rulesSubdir?: string;
 }
+
+export type MiddlewareRecipeType =
+  | 'security-headers'
+  | 'rate-limit'
+  | 'basic-auth'
+  | 'ip-allowlist'
+  | 'redirect-scheme'
+  | 'compress'
+  | 'crowdsec';
+
+export interface BlueprintField {
+  key: string;
+  label: string;
+  type: 'text' | 'textarea' | 'number' | 'boolean';
+  defaultValue: any;
+  placeholder?: string;
+  hint?: string;
+}
+
+export interface MiddlewareBlueprint {
+  type: MiddlewareRecipeType;
+  title: string;
+  category: 'security' | 'traffic' | 'routing' | 'performance';
+  description: string;
+  defaultName: string;
+  fields: BlueprintField[];
+  generateYaml: (name: string, params: Record<string, any>) => string;
+}

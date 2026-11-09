@@ -1052,8 +1052,464 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     };
   }
 
+  // src/doctor.ts
+  function runLocalAudit(index) {
+    const issues = index.issues || [];
+    const errorsCount = issues.filter((i) => i.severity === "error").length;
+    const warningsCount = issues.filter((i) => i.severity === "warning").length;
+    let overallStatus = "healthy";
+    if (errorsCount > 0) {
+      overallStatus = "error";
+    } else if (warningsCount > 0) {
+      overallStatus = "warning";
+    }
+    const localSummary = {
+      routersCount: index.routers?.size || 0,
+      servicesCount: index.services?.size || 0,
+      middlewaresCount: index.middlewares?.size || 0,
+      issuesCount: issues.length,
+      errorsCount,
+      warningsCount
+    };
+    return {
+      timestamp: Date.now(),
+      overallStatus,
+      localSummary,
+      issues,
+      apiStatus: {
+        checked: false,
+        reachable: false,
+        url: "",
+        runtimeErrors: [],
+        unloadedConfigs: []
+      }
+    };
+  }
+  async function queryTraefikApi(apiUrl, index, fetchFn = fetch) {
+    const cleanUrl = (apiUrl || "http://localhost:8080").trim().replace(/\/+$/, "");
+    const result = {
+      checked: true,
+      reachable: false,
+      url: cleanUrl,
+      runtimeErrors: [],
+      unloadedConfigs: []
+    };
+    try {
+      const verRes = await fetchFn(`${cleanUrl}/api/version`);
+      if (!verRes.ok) {
+        result.error = `HTTP ${verRes.status} ${verRes.statusText} from /api/version`;
+        return result;
+      }
+      const verData = await verRes.json();
+      result.reachable = true;
+      result.version = verData.version ? `${verData.version}${verData.codename ? ` (${verData.codename})` : ""}` : "Unknown";
+      result.startDate = verData.startDate;
+      try {
+        const ovRes = await fetchFn(`${cleanUrl}/api/overview`);
+        if (ovRes.ok) {
+          const ovData = await ovRes.json();
+          if (ovData?.http) {
+            result.overview = {
+              httpRoutersTotal: ovData.http.routers?.total ?? 0,
+              httpServicesTotal: ovData.http.services?.total ?? 0,
+              httpMiddlewaresTotal: ovData.http.middlewares?.total ?? 0
+            };
+          }
+        }
+      } catch (_) {
+      }
+      try {
+        const rawRes = await fetchFn(`${cleanUrl}/api/rawdata`);
+        if (rawRes.ok) {
+          const rawData = await rawRes.json();
+          const routers = rawData?.routers || {};
+          const services = rawData?.services || {};
+          const middlewares = rawData?.middlewares || {};
+          for (const [rName, rObj] of Object.entries(routers)) {
+            if (rObj?.status === "disabled" || rObj?.err && rObj.err.length > 0) {
+              result.runtimeErrors.push({
+                type: "router",
+                name: rName,
+                status: rObj.status || "unknown",
+                errors: Array.isArray(rObj.err) ? rObj.err : rObj.err ? [String(rObj.err)] : void 0
+              });
+            }
+          }
+          for (const [sName, sObj] of Object.entries(services)) {
+            if (sObj?.status === "disabled" || sObj?.err && sObj.err.length > 0) {
+              result.runtimeErrors.push({
+                type: "service",
+                name: sName,
+                status: sObj.status || "unknown",
+                errors: Array.isArray(sObj.err) ? sObj.err : sObj.err ? [String(sObj.err)] : void 0
+              });
+            }
+          }
+          for (const [mName, mObj] of Object.entries(middlewares)) {
+            if (mObj?.status === "disabled" || mObj?.err && mObj.err.length > 0) {
+              result.runtimeErrors.push({
+                type: "middleware",
+                name: mName,
+                status: mObj.status || "unknown",
+                errors: Array.isArray(mObj.err) ? mObj.err : mObj.err ? [String(mObj.err)] : void 0
+              });
+            }
+          }
+          if (index && index.routers) {
+            const runtimeRouterKeys = new Set(Object.keys(routers));
+            for (const [rId] of index.routers.entries()) {
+              const matches = Array.from(runtimeRouterKeys).some(
+                (k) => k === rId || k === `${rId}@file` || k.startsWith(`${rId}@`)
+              );
+              if (!matches) {
+                result.unloadedConfigs.push(`\u0420\u043E\u0443\u0442\u0435\u0440 '${rId}' \u043D\u0430\u0439\u0434\u0435\u043D \u0432 \u0444\u0430\u0439\u043B\u0430\u0445, \u043D\u043E \u043D\u0435 \u0437\u0430\u0433\u0440\u0443\u0436\u0435\u043D \u0432 Traefik`);
+              }
+            }
+          }
+        }
+      } catch (_) {
+      }
+      return result;
+    } catch (err) {
+      result.reachable = false;
+      result.error = err?.message || String(err);
+      return result;
+    }
+  }
+
+  // src/ui/doctorModal.ts
+  function openDoctorModal(indexer, onOpenMatrix) {
+    const existing = document.getElementById("cs-traefik-doctor-overlay");
+    if (existing) existing.remove();
+    const overlay = document.createElement("div");
+    overlay.id = "cs-traefik-doctor-overlay";
+    overlay.className = "cs-traefik-overlay";
+    const modal = document.createElement("div");
+    modal.className = "cs-traefik-modal cs-traefik-modal-xl";
+    const defaultApiUrl = localStorage.getItem("cs_traefik_api_url") || "http://localhost:8080";
+    let report = runLocalAudit(indexer.getIndex());
+    let isCheckingApi = false;
+    function render() {
+      const cs = window.ConfigStudio;
+      const { localSummary, issues, apiStatus, overallStatus } = report;
+      let overallBadgeClass = "cs-status-healthy";
+      let overallBadgeText = "HEALTHY: \u0412\u0441\u0435 \u0441\u0441\u044B\u043B\u043A\u0438 \u0438 \u043F\u0440\u0430\u0432\u0438\u043B\u0430 \u0432 \u043D\u043E\u0440\u043C\u0435";
+      if (overallStatus === "error" || apiStatus.runtimeErrors.length > 0) {
+        overallBadgeClass = "cs-status-error";
+        overallBadgeText = "ISSUES FOUND: \u041E\u0431\u043D\u0430\u0440\u0443\u0436\u0435\u043D\u044B \u043A\u0440\u0438\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0435 \u043E\u0448\u0438\u0431\u043A\u0438";
+      } else if (overallStatus === "warning" || apiStatus.checked && !apiStatus.reachable) {
+        overallBadgeClass = "cs-status-warning";
+        overallBadgeText = "WARNING: \u041E\u0431\u043D\u0430\u0440\u0443\u0436\u0435\u043D\u044B \u043F\u0440\u0435\u0434\u0443\u043F\u0440\u0435\u0436\u0434\u0435\u043D\u0438\u044F";
+      }
+      modal.innerHTML = `
+      <div class="cs-traefik-header">
+        <div class="cs-traefik-header-left">
+          <div class="cs-traefik-icon-badge" style="background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.35); color: #10b981;">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="cs-traefik-title">Traefik Doctor & Diagnostics</h2>
+            <div class="cs-traefik-subtitle">\u041B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 \u0430\u0443\u0434\u0438\u0442 \u0446\u0435\u043B\u043E\u0441\u0442\u043D\u043E\u0441\u0442\u0438 \u043A\u043E\u043D\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u0438 \u0438 \u0441\u0432\u0435\u0440\u043A\u0430 \u0441 Traefik REST API</div>
+          </div>
+        </div>
+        <div class="cs-traefik-header-actions">
+          <span class="cs-doctor-badge ${overallBadgeClass}">${overallBadgeText}</span>
+          <button id="cs-doctor-rescan-btn" class="cs-traefik-btn cs-traefik-btn-secondary" title="\u041E\u0431\u043D\u043E\u0432\u0438\u0442\u044C \u0430\u0443\u0434\u0438\u0442">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            \u041F\u0435\u0440\u0435\u0441\u043A\u0430\u043D\u0438\u0440\u043E\u0432\u0430\u0442\u044C
+          </button>
+          <button id="cs-doctor-close-btn" class="cs-traefik-btn-icon" title="\u0417\u0430\u043A\u0440\u044B\u0442\u044C">
+            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Metrics Row -->
+      <div class="cs-doctor-metrics-grid">
+        <div class="cs-doctor-metric-card">
+          <div class="cs-metric-num">${localSummary.routersCount}</div>
+          <div class="cs-metric-label">\u041C\u0430\u0440\u0448\u0440\u0443\u0442\u0438\u0437\u0430\u0442\u043E\u0440\u044B (Routers)</div>
+        </div>
+        <div class="cs-doctor-metric-card">
+          <div class="cs-metric-num">${localSummary.servicesCount}</div>
+          <div class="cs-metric-label">\u0421\u0435\u0440\u0432\u0438\u0441\u044B \u0431\u044D\u043A\u0435\u043D\u0434\u0430 (Services)</div>
+        </div>
+        <div class="cs-doctor-metric-card">
+          <div class="cs-metric-num">${localSummary.middlewaresCount}</div>
+          <div class="cs-metric-label">\u041F\u0440\u0430\u0432\u0438\u043B\u0430 (Middlewares)</div>
+        </div>
+        <div class="cs-doctor-metric-card ${localSummary.errorsCount > 0 ? "cs-metric-error" : localSummary.warningsCount > 0 ? "cs-metric-warn" : "cs-metric-ok"}">
+          <div class="cs-metric-num">${localSummary.issuesCount}</div>
+          <div class="cs-metric-label">\u0417\u0430\u043C\u0435\u0447\u0430\u043D\u0438\u0439 \u043B\u0438\u043D\u0442\u0435\u0440\u0430 (${localSummary.errorsCount} \u043E\u0448., ${localSummary.warningsCount} \u043F\u0440\u0435\u0434.)</div>
+        </div>
+      </div>
+
+      <!-- Main Scrollable Body -->
+      <div class="cs-doctor-body">
+        <!-- Section 1: Local Rules Audit -->
+        <div class="cs-doctor-section">
+          <div class="cs-section-header">
+            <div class="cs-section-title">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+              </svg>
+              \u041B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 \u0430\u0443\u0434\u0438\u0442 \u0446\u0435\u043B\u043E\u0441\u0442\u043D\u043E\u0441\u0442\u0438 \u0441\u0441\u044B\u043B\u043E\u043A (Local Linter)
+            </div>
+            <span class="cs-section-badge">${issues.length} \u043D\u0430\u0439\u0434\u0435\u043D\u043E</span>
+          </div>
+
+          ${issues.length === 0 ? `
+            <div class="cs-doctor-clean-state">
+              <div class="cs-clean-icon">
+                <svg width="32" height="32" fill="none" stroke="#10b981" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+              </div>
+              <div class="cs-clean-title">\u041E\u0448\u0438\u0431\u043E\u043A \u0446\u0435\u043B\u043E\u0441\u0442\u043D\u043E\u0441\u0442\u0438 \u043D\u0435 \u043E\u0431\u043D\u0430\u0440\u0443\u0436\u0435\u043D\u043E</div>
+              <div class="cs-clean-desc">\u0412\u0441\u0435 \u0441\u0441\u044B\u043B\u043A\u0438 \u043D\u0430 middlewares (@file) \u0438 \u0431\u044D\u043A\u0435\u043D\u0434-\u0441\u0435\u0440\u0432\u0438\u0441\u044B \u0432\u0430\u043B\u0438\u0434\u043D\u044B. \u041A\u043E\u043B\u043B\u0438\u0437\u0438\u0439 Host() \u043D\u0430 \u043E\u0434\u0438\u043D\u0430\u043A\u043E\u0432\u044B\u0445 EntryPoints \u0431\u0435\u0437 \u043F\u0440\u0438\u043E\u0440\u0438\u0442\u0435\u0442\u0430 \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u043E.</div>
+            </div>
+          ` : `
+            <div class="cs-doctor-issues-table-wrap">
+              <table class="cs-traefik-table">
+                <thead>
+                  <tr>
+                    <th style="width: 110px;">\u0421\u0442\u0430\u0442\u0443\u0441</th>
+                    <th style="width: 170px;">\u041A\u043E\u0434 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438</th>
+                    <th>\u041E\u043F\u0438\u0441\u0430\u043D\u0438\u0435 \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B</th>
+                    <th style="width: 220px;">\u0424\u0430\u0439\u043B \u0438 \u0441\u0442\u0440\u043E\u043A\u0430</th>
+                    <th style="width: 80px; text-align: center;">\u0414\u0435\u0439\u0441\u0442\u0432\u0438\u0435</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${issues.map(
+        (iss) => `
+                    <tr>
+                      <td>
+                        <span class="cs-traefik-issue-badge ${iss.severity === "error" ? "cs-issue-err" : "cs-issue-warn"}">
+                          ${iss.severity.toUpperCase()}
+                        </span>
+                      </td>
+                      <td><code>${iss.code}</code></td>
+                      <td>${escapeHtml(iss.message)}</td>
+                      <td><code class="cs-traefik-file-link">${escapeHtml(iss.file)}:${iss.line}</code></td>
+                      <td style="text-align: center;">
+                        <button class="cs-traefik-jump-btn" data-jump-file="${escapeHtml(iss.file)}" data-jump-line="${iss.line}">
+                          \u041F\u0435\u0440\u0435\u0439\u0442\u0438
+                        </button>
+                      </td>
+                    </tr>
+                  `
+      ).join("")}
+                </tbody>
+              </table>
+            </div>
+          `}
+        </div>
+
+        <!-- Section 2: Traefik REST API Health -->
+        <div class="cs-doctor-section" style="margin-top: 20px;">
+          <div class="cs-section-header">
+            <div class="cs-section-title">
+              <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M12 5l7 7-7 7"/>
+              </svg>
+              Traefik REST API & Runtime Health Check
+            </div>
+            <div class="cs-api-input-wrap">
+              <input type="text" id="cs-doctor-api-url" class="cs-api-input" value="${escapeHtml(
+        apiStatus.url || defaultApiUrl
+      )}" placeholder="http://localhost:8080" />
+              <button id="cs-doctor-test-api-btn" class="cs-traefik-btn cs-traefik-btn-primary" ${isCheckingApi ? "disabled" : ""}>
+                ${isCheckingApi ? "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430..." : "\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C API"}
+              </button>
+            </div>
+          </div>
+
+          <div class="cs-api-results-box">
+            ${!apiStatus.checked ? `
+              <div class="cs-doctor-hint-box">
+                <svg width="18" height="18" fill="none" stroke="#38bdf8" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>\u041D\u0430\u0436\u043C\u0438\u0442\u0435 <strong>\xAB\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C API\xBB</strong> \u0434\u043B\u044F \u043F\u0440\u044F\u043C\u043E\u0433\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u043A \u0440\u0430\u043D\u0442\u0430\u0439\u043C\u0443 Traefik (\u044D\u043D\u0434\u043F\u043E\u0438\u043D\u0442\u044B <code>/api/version</code>, <code>/api/overview</code>, <code>/api/rawdata</code>).</span>
+              </div>
+            ` : apiStatus.reachable ? `
+              <div class="cs-api-details-grid">
+                <div class="cs-api-detail-item">
+                  <div class="cs-detail-label">\u0412\u0435\u0440\u0441\u0438\u044F Traefik</div>
+                  <div class="cs-detail-val"><code>${escapeHtml(apiStatus.version || "Unknown")}</code></div>
+                </div>
+                <div class="cs-api-detail-item">
+                  <div class="cs-detail-label">\u0410\u043A\u0442\u0438\u0432\u043D\u044B\u0445 Routers (HTTP)</div>
+                  <div class="cs-detail-val">${apiStatus.overview?.httpRoutersTotal ?? "\u043D/\u0434"}</div>
+                </div>
+                <div class="cs-api-detail-item">
+                  <div class="cs-detail-label">\u0410\u043A\u0442\u0438\u0432\u043D\u044B\u0445 Services (HTTP)</div>
+                  <div class="cs-detail-val">${apiStatus.overview?.httpServicesTotal ?? "\u043D/\u0434"}</div>
+                </div>
+                <div class="cs-api-detail-item">
+                  <div class="cs-detail-label">\u0410\u043A\u0442\u0438\u0432\u043D\u044B\u0445 Middlewares (HTTP)</div>
+                  <div class="cs-detail-val">${apiStatus.overview?.httpMiddlewaresTotal ?? "\u043D/\u0434"}</div>
+                </div>
+              </div>
+
+              ${apiStatus.runtimeErrors.length > 0 ? `
+                <div class="cs-runtime-errors-alert">
+                  <div class="cs-alert-title">\u041E\u0431\u043D\u0430\u0440\u0443\u0436\u0435\u043D\u044B \u043E\u0448\u0438\u0431\u043A\u0438 \u0440\u0430\u043D\u0442\u0430\u0439\u043C\u0430 Traefik (${apiStatus.runtimeErrors.length}):</div>
+                  <ul class="cs-alert-list">
+                    ${apiStatus.runtimeErrors.map(
+        (err) => `
+                      <li>
+                        <strong>[${err.type.toUpperCase()}] ${escapeHtml(err.name)}</strong> (\u0441\u0442\u0430\u0442\u0443\u0441: ${escapeHtml(
+          err.status
+        )}):
+                        ${escapeHtml(err.errors?.join("; ") || "\u041E\u0442\u043A\u043B\u044E\u0447\u0435\u043D \u0438\u043B\u0438 \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u0442 \u043E\u0448\u0438\u0431\u043A\u0443 \u043A\u043E\u043C\u043F\u0438\u043B\u044F\u0446\u0438\u0438")}
+                      </li>
+                    `
+      ).join("")}
+                  </ul>
+                </div>
+              ` : `
+                <div class="cs-runtime-ok-alert">
+                  \u0412\u0441\u0435 \u043A\u043E\u043D\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u0438 \u0432 \u043F\u0430\u043C\u044F\u0442\u0438 Traefik \u0440\u0430\u0431\u043E\u0442\u0430\u044E\u0442 \u0448\u0442\u0430\u0442\u043D\u043E (\u0441\u0442\u0430\u0442\u0443\u0441 enabled, 0 \u043E\u0448\u0438\u0431\u043E\u043A \u043A\u043E\u043C\u043F\u0438\u043B\u044F\u0446\u0438\u0438).
+                </div>
+              `}
+
+              ${apiStatus.unloadedConfigs.length > 0 ? `
+                <div class="cs-runtime-warn-alert">
+                  <div class="cs-alert-title">\u041D\u0435\u0441\u043E\u043E\u0442\u0432\u0435\u0442\u0441\u0442\u0432\u0438\u044F \u0444\u0430\u0439\u043B\u043E\u0432 \u0438 \u0440\u0430\u043D\u0442\u0430\u0439\u043C\u0430 (${apiStatus.unloadedConfigs.length}):</div>
+                  <ul class="cs-alert-list">
+                    ${apiStatus.unloadedConfigs.map((u) => `<li>${escapeHtml(u)}</li>`).join("")}
+                  </ul>
+                </div>
+              ` : ""}
+            ` : `
+              <div class="cs-api-error-card">
+                <div class="cs-error-icon">
+                  <svg width="24" height="24" fill="none" stroke="#ef4444" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+                  </svg>
+                </div>
+                <div>
+                  <div class="cs-error-title">Traefik API \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D \u043F\u043E \u0430\u0434\u0440\u0435\u0441\u0443: <code>${escapeHtml(apiStatus.url)}</code></div>
+                  <div class="cs-error-desc">${escapeHtml(apiStatus.error || "Connection failed")}</div>
+                  <div class="cs-error-hint">
+                    \u0423\u0431\u0435\u0434\u0438\u0442\u0435\u0441\u044C, \u0447\u0442\u043E Traefik \u0437\u0430\u043F\u0443\u0449\u0435\u043D \u0438 \u0432 \u0435\u0433\u043E \u043A\u043E\u043D\u0444\u0438\u0433\u0443\u0440\u0430\u0446\u0438\u0438 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043D REST API:<br/>
+                    <code>api: { insecure: true, dashboard: true }</code> (\u043F\u043E\u0440\u0442 8080 \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E).
+                  </div>
+                </div>
+              </div>
+            `}
+          </div>
+        </div>
+      </div>
+
+      <!-- Footer Actions -->
+      <div class="cs-traefik-footer">
+        <button id="cs-doctor-matrix-btn" class="cs-traefik-btn cs-traefik-btn-secondary">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+          </svg>
+          \u041C\u0430\u0442\u0440\u0438\u0446\u0430 \u043F\u0440\u0430\u0432\u0438\u043B
+        </button>
+        <button id="cs-doctor-dashboard-btn" class="cs-traefik-btn cs-traefik-btn-secondary">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+          </svg>
+          \u041E\u0442\u043A\u0440\u044B\u0442\u044C Dashboard
+        </button>
+        <button id="cs-doctor-footer-close-btn" class="cs-traefik-btn cs-traefik-btn-primary">
+          \u0417\u0430\u043A\u0440\u044B\u0442\u044C
+        </button>
+      </div>
+    `;
+      bindEvents();
+    }
+    function bindEvents() {
+      const cs = window.ConfigStudio;
+      const close = () => {
+        document.removeEventListener("keydown", handleKey);
+        overlay.remove();
+      };
+      modal.querySelector("#cs-doctor-close-btn")?.addEventListener("click", close);
+      modal.querySelector("#cs-doctor-footer-close-btn")?.addEventListener("click", close);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) close();
+      });
+      modal.querySelector("#cs-doctor-rescan-btn")?.addEventListener("click", async () => {
+        await indexer.scanWorkspace();
+        report = runLocalAudit(indexer.getIndex());
+        render();
+      });
+      modal.querySelector("#cs-doctor-test-api-btn")?.addEventListener("click", async () => {
+        const input = modal.querySelector("#cs-doctor-api-url");
+        const url = input?.value.trim() || "http://localhost:8080";
+        localStorage.setItem("cs_traefik_api_url", url);
+        isCheckingApi = true;
+        render();
+        try {
+          const apiStatus = await queryTraefikApi(url, indexer.getIndex());
+          report.apiStatus = apiStatus;
+        } catch (err) {
+          report.apiStatus = {
+            checked: true,
+            reachable: false,
+            url,
+            runtimeErrors: [],
+            unloadedConfigs: [],
+            error: err?.message || String(err)
+          };
+        } finally {
+          isCheckingApi = false;
+          render();
+        }
+      });
+      modal.querySelector("#cs-doctor-matrix-btn")?.addEventListener("click", () => {
+        close();
+        if (onOpenMatrix) onOpenMatrix();
+      });
+      modal.querySelector("#cs-doctor-dashboard-btn")?.addEventListener("click", () => {
+        const input = modal.querySelector("#cs-doctor-api-url");
+        const url = (input?.value.trim() || defaultApiUrl).replace(/\/+$/, "");
+        const dashboardUrl = `${url}/dashboard/`;
+        window.open(dashboardUrl, "_blank");
+      });
+      const jumpBtns = modal.querySelectorAll("[data-jump-file]");
+      jumpBtns.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const filePath = btn.getAttribute("data-jump-file");
+          const line = Number(btn.getAttribute("data-jump-line")) || 1;
+          if (filePath && cs?.openFile) {
+            cs.openFile(filePath, { line, highlight: true });
+            close();
+          }
+        });
+      });
+    }
+    function handleKey(e) {
+      if (e.key === "Escape") {
+        document.removeEventListener("keydown", handleKey);
+        overlay.remove();
+      }
+    }
+    document.addEventListener("keydown", handleKey);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    render();
+  }
+  function escapeHtml(str) {
+    if (!str) return "";
+    return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
   // src/ui/matrixModal.ts
-  function openMatrixModal(indexer, onOpenWizard) {
+  function openMatrixModal(indexer, onOpenWizard, onOpenDoctor) {
     const existing = document.getElementById("cs-traefik-matrix-overlay");
     if (existing) existing.remove();
     const overlay = document.createElement("div");
@@ -1097,6 +1553,12 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
           </div>
         </div>
         <div class="cs-traefik-header-actions">
+          <button id="cs-traefik-btn-doctor" class="cs-traefik-btn cs-traefik-btn-secondary" title="\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u043A\u0443 Traefik Doctor">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+            </svg>
+            Traefik Doctor
+          </button>
           <button id="cs-traefik-btn-new-service" class="cs-traefik-btn cs-traefik-btn-primary">
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -1163,9 +1625,9 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
           <div class="cs-traefik-issues-list">
             ${issues.map(
         (issue) => `
-              <div class="cs-traefik-issue-item ${issue.severity}" data-file="${escapeHtml(issue.file)}" data-line="${issue.line}">
+              <div class="cs-traefik-issue-item ${issue.severity}" data-file="${escapeHtml2(issue.file)}" data-line="${issue.line}">
                 <span class="cs-traefik-issue-badge">${issue.code}</span>
-                <span class="cs-traefik-issue-msg">${escapeHtml(issue.message)}</span>
+                <span class="cs-traefik-issue-msg">${escapeHtml2(issue.message)}</span>
                 <span class="cs-traefik-issue-link">\u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u0432 ${getBasename(issue.file)}:${issue.line} &rarr;</span>
               </div>
             `
@@ -1226,8 +1688,8 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
           const mwDef = index.middlewares.get(clean);
           const title = exists ? `${clean} (${mwDef?.summary || mwDef?.type})` : `\u041E\u0428\u0418\u0411\u041A\u0410: Middleware '${clean}' \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D \u0432 \u043F\u0440\u0430\u0432\u0438\u043B\u0430\u0445!`;
           return `
-            <span class="cs-traefik-mw-badge ${exists ? "valid" : "invalid"}" title="${escapeHtml(title)}" data-mw="${escapeHtml(mw)}" data-file="${escapeHtml(r.file)}" data-line="${r.middlewareLines?.[mw] || r.line}">
-              ${escapeHtml(clean)}
+            <span class="cs-traefik-mw-badge ${exists ? "valid" : "invalid"}" title="${escapeHtml2(title)}" data-mw="${escapeHtml2(mw)}" data-file="${escapeHtml2(r.file)}" data-line="${r.middlewareLines?.[mw] || r.line}">
+              ${escapeHtml2(clean)}
               ${!exists ? '<span class="cs-mw-broken">\u2716</span>' : ""}
             </span>
           `;
@@ -1235,25 +1697,25 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
         const routerIssues = index.issues?.filter((i) => i.file === r.file && (i.line === r.line || i.message.includes(r.id))) || [];
         const statusClass = routerIssues.length > 0 ? routerIssues.some((i) => i.severity === "error") ? "error" : "warn" : "ok";
         return `
-          <tr class="cs-traefik-row" data-file="${escapeHtml(r.file)}" data-line="${r.line}">
+          <tr class="cs-traefik-row" data-file="${escapeHtml2(r.file)}" data-line="${r.line}">
             <td>
               <span class="cs-traefik-status-dot ${statusClass}" title="${statusClass === "ok" ? "\u0412\u0430\u043B\u0438\u0434\u0435\u043D" : "\u0415\u0441\u0442\u044C \u043F\u0440\u043E\u0431\u043B\u0435\u043C\u044B"}"></span>
             </td>
             <td>
               <div class="cs-traefik-cell-main">
-                <span class="cs-traefik-router-name">${escapeHtml(r.id)}</span>
-                <span class="cs-traefik-file-link" data-file="${escapeHtml(r.file)}" data-line="${r.line}">
+                <span class="cs-traefik-router-name">${escapeHtml2(r.id)}</span>
+                <span class="cs-traefik-file-link" data-file="${escapeHtml2(r.file)}" data-line="${r.line}">
                   ${getBasename(r.file)}:${r.line}
                 </span>
               </div>
             </td>
             <td>
-              <div class="cs-traefik-cell-host" title="${escapeHtml(r.rule)}">
-                ${r.host ? `<span class="cs-traefik-host-text">${escapeHtml(r.host)}</span>` : `<code class="cs-traefik-rule-code">${escapeHtml(r.rule)}</code>`}
+              <div class="cs-traefik-cell-host" title="${escapeHtml2(r.rule)}">
+                ${r.host ? `<span class="cs-traefik-host-text">${escapeHtml2(r.host)}</span>` : `<code class="cs-traefik-rule-code">${escapeHtml2(r.rule)}</code>`}
               </div>
             </td>
             <td>
-              ${r.entryPoints.map((ep) => `<span class="cs-traefik-ep-badge">${escapeHtml(ep)}</span>`).join(" ") || '<span class="cs-muted">\u2014</span>'}
+              ${r.entryPoints.map((ep) => `<span class="cs-traefik-ep-badge">${escapeHtml2(ep)}</span>`).join(" ") || '<span class="cs-muted">\u2014</span>'}
             </td>
             <td>
               ${r.tls ? `<span class="cs-traefik-tls-badge" title="TLS Resolver: ${r.certResolver || "Default"}">
@@ -1263,10 +1725,10 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
             </td>
             <td>
               <div class="cs-traefik-backend-cell">
-                <span class="cs-traefik-svc-name" title="${svc ? `${getBasename(svc.file)}:${svc.line}` : "\u041D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D"}" data-file="${escapeHtml(svc?.file || r.file)}" data-line="${svc?.line || r.serviceLine || r.line}">
-                  ${escapeHtml(r.service)}
+                <span class="cs-traefik-svc-name" title="${svc ? `${getBasename(svc.file)}:${svc.line}` : "\u041D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D"}" data-file="${escapeHtml2(svc?.file || r.file)}" data-line="${svc?.line || r.serviceLine || r.line}">
+                  ${escapeHtml2(r.service)}
                 </span>
-                <span class="cs-traefik-backend-url" title="${escapeHtml(backendUrls)}">${escapeHtml(backendUrls)}</span>
+                <span class="cs-traefik-backend-url" title="${escapeHtml2(backendUrls)}">${escapeHtml2(backendUrls)}</span>
               </div>
             </td>
             <td>
@@ -1275,7 +1737,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
               </div>
             </td>
             <td>
-              <button class="cs-traefik-jump-btn" data-file="${escapeHtml(r.file)}" data-line="${r.line}">
+              <button class="cs-traefik-jump-btn" data-file="${escapeHtml2(r.file)}" data-line="${r.line}">
                 \u041E\u0442\u043A\u0440\u044B\u0442\u044C &rarr;
               </button>
             </td>
@@ -1288,6 +1750,11 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
       closeBtn?.addEventListener("click", closeModal);
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) closeModal();
+      });
+      const doctorBtn = modal.querySelector("#cs-traefik-btn-doctor");
+      doctorBtn?.addEventListener("click", () => {
+        closeModal();
+        if (onOpenDoctor) onOpenDoctor();
       });
       const newBtn = modal.querySelector("#cs-traefik-btn-new-service");
       newBtn?.addEventListener("click", () => {
@@ -1368,7 +1835,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     document.body.appendChild(overlay);
     renderContent();
   }
-  function escapeHtml(str) {
+  function escapeHtml2(str) {
     if (!str) return "";
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -1415,9 +1882,259 @@ ${tlsBlock}
 `;
     return yaml;
   }
+  var MIDDLEWARE_BLUEPRINTS = [
+    {
+      type: "security-headers",
+      title: "Security Headers",
+      category: "security",
+      description: "HSTS, X-Frame-Options (SAMEORIGIN), nosniff, XSS protection, Referrer-Policy",
+      defaultName: "mw-security-headers",
+      fields: [
+        {
+          key: "sslRedirect",
+          label: "SSL Redirect",
+          type: "boolean",
+          defaultValue: true,
+          hint: "\u041F\u0440\u0438\u043D\u0443\u0434\u0438\u0442\u0435\u043B\u044C\u043D\u044B\u0439 \u0440\u0435\u0434\u0438\u0440\u0435\u043A\u0442 \u043D\u0430 \u0437\u0430\u0449\u0438\u0449\u0435\u043D\u043D\u044B\u0439 \u043F\u0440\u043E\u0442\u043E\u043A\u043E\u043B"
+        },
+        {
+          key: "customFrameOptionsValue",
+          label: "Frame Options",
+          type: "text",
+          defaultValue: "SAMEORIGIN",
+          hint: "\u0417\u0430\u0449\u0438\u0442\u0430 \u043E\u0442 \u043A\u043B\u0438\u043A\u0434\u0436\u0435\u043A\u0438\u043D\u0433\u0430 (SAMEORIGIN, DENY)"
+        }
+      ],
+      generateYaml: (name, params) => {
+        const frameOpt = params.customFrameOptionsValue || "SAMEORIGIN";
+        const sslRedir = params.sslRedirect !== false;
+        return `http:
+  middlewares:
+    ${name}:
+      headers:
+        sslRedirect: ${sslRedir}
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+        forceSTSHeader: true
+        customFrameOptionsValue: "${frameOpt}"
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: "same-origin"
+`;
+      }
+    },
+    {
+      type: "rate-limit",
+      title: "Rate Limit",
+      category: "traffic",
+      description: "\u041E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0438\u0435 \u0447\u0430\u0441\u0442\u043E\u0442\u044B \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u0434\u043B\u044F \u0437\u0430\u0449\u0438\u0442\u044B \u043E\u0442 DDoS \u0438 \u0431\u0440\u0443\u0442\u0444\u043E\u0440\u0441\u0430",
+      defaultName: "mw-rate-limit",
+      fields: [
+        {
+          key: "average",
+          label: "\u0421\u0440\u0435\u0434\u043D\u0435\u0435 \u0447\u0438\u0441\u043B\u043E \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 (average)",
+          type: "number",
+          defaultValue: 100,
+          hint: "\u041C\u0430\u043A\u0441\u0438\u043C\u0443\u043C \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u0432 \u0435\u0434\u0438\u043D\u0438\u0446\u0443 \u0432\u0440\u0435\u043C\u0435\u043D\u0438"
+        },
+        {
+          key: "burst",
+          label: "\u0412\u0441\u043F\u043B\u0435\u0441\u043A (burst)",
+          type: "number",
+          defaultValue: 50,
+          hint: "\u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u044B\u0439 \u0440\u0430\u0437\u0440\u0435\u0448\u0435\u043D\u043D\u044B\u0439 \u0440\u0430\u0437\u043C\u0435\u0440 \u043A\u0440\u0430\u0442\u043A\u043E\u0432\u0440\u0435\u043C\u0435\u043D\u043D\u043E\u0433\u043E \u0432\u0441\u043F\u043B\u0435\u0441\u043A\u0430"
+        },
+        {
+          key: "period",
+          label: "\u041F\u0435\u0440\u0438\u043E\u0434 (period)",
+          type: "text",
+          defaultValue: "1s",
+          hint: "\u041E\u043A\u043D\u043E \u0437\u0430\u043C\u0435\u0440\u0430 (1s, 1m, 1h)"
+        }
+      ],
+      generateYaml: (name, params) => {
+        const avg = Number(params.average) || 100;
+        const burst = Number(params.burst) || 50;
+        const period = params.period || "1s";
+        return `http:
+  middlewares:
+    ${name}:
+      rateLimit:
+        average: ${avg}
+        burst: ${burst}
+        period: "${period}"
+`;
+      }
+    },
+    {
+      type: "basic-auth",
+      title: "Basic Auth (HTTP)",
+      category: "security",
+      description: "HTTP Basic \u0430\u0432\u0442\u043E\u0440\u0438\u0437\u0430\u0446\u0438\u044F \u043F\u043E \u043B\u043E\u0433\u0438\u043D\u0443 \u0438 \u043F\u0430\u0440\u043E\u043B\u044E (htpasswd / bcrypt)",
+      defaultName: "mw-basic-auth",
+      fields: [
+        {
+          key: "users",
+          label: "\u041F\u043E\u043B\u044C\u0437\u043E\u0432\u0430\u0442\u0435\u043B\u0438 (\u043F\u043E \u0441\u0442\u0440\u043E\u043A\u0430\u043C \u0438\u043B\u0438 \u0447\u0435\u0440\u0435\u0437 \u0437\u0430\u043F\u044F\u0442\u0443\u044E)",
+          type: "textarea",
+          defaultValue: "admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/",
+          placeholder: "admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/\nuser2:$2y$05$...",
+          hint: "\u0421\u0433\u0435\u043D\u0435\u0440\u0438\u0440\u0443\u0439\u0442\u0435 \u0447\u0435\u0440\u0435\u0437 htpasswd -nb user password"
+        },
+        {
+          key: "removeHeader",
+          label: "\u0423\u0434\u0430\u043B\u044F\u0442\u044C \u0437\u0430\u0433\u043E\u043B\u043E\u0432\u043E\u043A Authorization \u043F\u0440\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u043A\u0435 \u0431\u044D\u043A\u0435\u043D\u0434\u0443",
+          type: "boolean",
+          defaultValue: true
+        }
+      ],
+      generateYaml: (name, params) => {
+        const rawUsers = String(params.users || "admin:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/");
+        const userList = rawUsers.split(/[\n,]/).map((u) => u.trim()).filter(Boolean);
+        const userLines = userList.map((u) => `          - "${u.replace(/"/g, '\\"')}"`).join("\n");
+        const removeHdr = params.removeHeader !== false;
+        return `http:
+  middlewares:
+    ${name}:
+      basicAuth:
+        users:
+${userLines}
+        removeHeader: ${removeHdr}
+`;
+      }
+    },
+    {
+      type: "ip-allowlist",
+      title: "IP AllowList (Whitelist)",
+      category: "security",
+      description: "\u041E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0438\u0435 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043A \u0441\u0435\u0440\u0432\u0438\u0441\u0443 \u0441\u043F\u0438\u0441\u043A\u043E\u043C \u0434\u043E\u0432\u0435\u0440\u0435\u043D\u043D\u044B\u0445 IP \u0438\u043B\u0438 CIDR-\u0434\u0438\u0430\u043F\u0430\u0437\u043E\u043D\u043E\u0432",
+      defaultName: "mw-local-only",
+      fields: [
+        {
+          key: "sourceRange",
+          label: "\u0420\u0430\u0437\u0440\u0435\u0448\u0435\u043D\u043D\u044B\u0435 CIDR \u043F\u043E\u0434\u0441\u0435\u0442\u0438",
+          type: "textarea",
+          defaultValue: "127.0.0.1/32\n192.168.0.0/16\n10.0.0.0/8",
+          placeholder: "127.0.0.1/32\n192.168.1.0/24",
+          hint: "\u041F\u043E\u0434\u0441\u0435\u0442\u0438 \u0447\u0435\u0440\u0435\u0437 \u043F\u0435\u0440\u0435\u0432\u043E\u0434 \u0441\u0442\u0440\u043E\u043A\u0438 \u0438\u043B\u0438 \u0437\u0430\u043F\u044F\u0442\u0443\u044E"
+        }
+      ],
+      generateYaml: (name, params) => {
+        const rawCidrs = String(params.sourceRange || "127.0.0.1/32\n192.168.0.0/16\n10.0.0.0/8");
+        const cidrList = rawCidrs.split(/[\n,]/).map((c) => c.trim()).filter(Boolean);
+        const cidrLines = cidrList.map((c) => `          - "${c.replace(/"/g, "")}"`).join("\n");
+        return `http:
+  middlewares:
+    ${name}:
+      ipAllowList:
+        sourceRange:
+${cidrLines}
+`;
+      }
+    },
+    {
+      type: "redirect-scheme",
+      title: "Redirect Scheme (HTTPS)",
+      category: "routing",
+      description: "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0439 HTTP 301 \u0440\u0435\u0434\u0438\u0440\u0435\u043A\u0442 \u0432\u0445\u043E\u0434\u044F\u0449\u0435\u0433\u043E \u0442\u0440\u0430\u0444\u0438\u043A\u0430 \u0441 HTTP \u043D\u0430 \u0437\u0430\u0449\u0438\u0449\u0435\u043D\u043D\u044B\u0439 HTTPS",
+      defaultName: "mw-redirect-https",
+      fields: [
+        {
+          key: "scheme",
+          label: "\u0426\u0435\u043B\u0435\u0432\u0430\u044F \u0441\u0445\u0435\u043C\u0430",
+          type: "text",
+          defaultValue: "https"
+        },
+        {
+          key: "permanent",
+          label: "\u041F\u043E\u0441\u0442\u043E\u044F\u043D\u043D\u044B\u0439 \u0440\u0435\u0434\u0438\u0440\u0435\u043A\u0442 (HTTP 301)",
+          type: "boolean",
+          defaultValue: true
+        }
+      ],
+      generateYaml: (name, params) => {
+        const scheme = params.scheme || "https";
+        const permanent = params.permanent !== false;
+        return `http:
+  middlewares:
+    ${name}:
+      redirectScheme:
+        scheme: "${scheme}"
+        permanent: ${permanent}
+`;
+      }
+    },
+    {
+      type: "compress",
+      title: "Compress (Gzip / Deflate)",
+      category: "performance",
+      description: "\u0421\u0436\u0430\u0442\u0438\u0435 \u043E\u0442\u0432\u0435\u0442\u043E\u0432 \u0432\u0435\u0431-\u0441\u0435\u0440\u0432\u0435\u0440\u0430 \u0434\u043B\u044F \u044D\u043A\u043E\u043D\u043E\u043C\u0438\u0438 \u0442\u0440\u0430\u0444\u0438\u043A\u0430 \u0438 \u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F \u0437\u0430\u0433\u0440\u0443\u0437\u043A\u0438 \u043A\u043B\u0438\u0435\u043D\u0442\u043E\u0432",
+      defaultName: "mw-compress",
+      fields: [
+        {
+          key: "minResponseBodyBytes",
+          label: "\u041C\u0438\u043D. \u0440\u0430\u0437\u043C\u0435\u0440 \u043E\u0442\u0432\u0435\u0442\u0430 \u0434\u043B\u044F \u0441\u0436\u0430\u0442\u0438\u044F (bytes)",
+          type: "number",
+          defaultValue: 1024
+        }
+      ],
+      generateYaml: (name, params) => {
+        const minBytes = Number(params.minResponseBodyBytes) || 1024;
+        return `http:
+  middlewares:
+    ${name}:
+      compress:
+        minResponseBodyBytes: ${minBytes}
+`;
+      }
+    },
+    {
+      type: "crowdsec",
+      title: "CrowdSec Bouncer",
+      category: "security",
+      description: "\u0418\u043D\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u044F \u0441 CrowdSec \u0434\u043B\u044F \u043F\u0440\u043E\u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0439 \u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u0438 IP-\u0430\u0434\u0440\u0435\u0441\u043E\u0432 \u0431\u043E\u0442\u043D\u0435\u0442\u043E\u0432 \u0438 \u0441\u043A\u0430\u043D\u0435\u0440\u043E\u0432",
+      defaultName: "mw-crowdsec-bouncer",
+      fields: [
+        {
+          key: "crowdsecMode",
+          label: "\u0420\u0435\u0436\u0438\u043C \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0438 (crowdsecMode)",
+          type: "text",
+          defaultValue: "live",
+          hint: "live \u0438\u043B\u0438 stream"
+        },
+        {
+          key: "updateInterval",
+          label: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B \u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u044F (updateInterval)",
+          type: "text",
+          defaultValue: "10s"
+        }
+      ],
+      generateYaml: (name, params) => {
+        const mode = params.crowdsecMode || "live";
+        const interval = params.updateInterval || "10s";
+        return `http:
+  middlewares:
+    ${name}:
+      plugin:
+        crowdsecBouncer:
+          enabled: true
+          crowdsecMode: ${mode}
+          updateInterval: "${interval}"
+`;
+      }
+    }
+  ];
+  function generateMiddlewareYaml(type, name, params = {}) {
+    const blueprint = MIDDLEWARE_BLUEPRINTS.find((b) => b.type === type);
+    if (!blueprint) {
+      throw new Error(`Unknown middleware blueprint recipe type: ${type}`);
+    }
+    return blueprint.generateYaml(name, params);
+  }
 
   // src/ui/wizardModal.ts
-  function openWizardModal(indexer, onCreated) {
+  function openWizardModal(indexer, onCreated, initialMode = "service") {
     const existing = document.getElementById("cs-traefik-wizard-overlay");
     if (existing) existing.remove();
     const overlay = document.createElement("div");
@@ -1428,7 +2145,8 @@ ${tlsBlock}
     const index = indexer.getIndex();
     const availableMiddlewares = index ? Array.from(index.middlewares.values()) : [];
     const rulesDir = index?.rulesDir || "rules";
-    const state = {
+    let currentMode = initialMode;
+    const serviceState = {
       name: "myservice",
       host: "myservice.example.com",
       targetUrl: "http://127.0.0.1:8080",
@@ -1438,120 +2156,238 @@ ${tlsBlock}
       middlewares: availableMiddlewares.length > 0 ? [availableMiddlewares[0].id] : [],
       rulesSubdir: rulesDir
     };
-    modal.innerHTML = `
-    <div class="cs-traefik-header">
-      <div class="cs-traefik-header-left">
-        <div class="cs-traefik-icon-badge">
-          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+    let selectedBlueprintType = "security-headers";
+    const blueprintParams = {};
+    const initialBp = MIDDLEWARE_BLUEPRINTS[0];
+    initialBp.fields.forEach((f) => {
+      blueprintParams[f.key] = f.defaultValue;
+    });
+    let blueprintName = initialBp.defaultName;
+    function renderModal() {
+      modal.innerHTML = `
+      <div class="cs-traefik-header">
+        <div class="cs-traefik-header-left">
+          <div class="cs-traefik-icon-badge">
+            <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+            </svg>
+          </div>
+          <div>
+            <h2 class="cs-traefik-title">\u041C\u0430\u0441\u0442\u0435\u0440 Traefik Dynamic & Blueprints</h2>
+            <div class="cs-traefik-subtitle">\u041A\u043E\u043D\u0441\u0442\u0440\u0443\u043A\u0442\u043E\u0440 \u0441\u0435\u0440\u0432\u0438\u0441\u043E\u0432 (ser-*.yml) \u0438 \u0440\u0435\u0446\u0435\u043F\u0442\u044B \u0433\u043E\u0442\u043E\u0432\u044B\u0445 \u043F\u0440\u0430\u0432\u0438\u043B (mw-*.yml)</div>
+          </div>
+        </div>
+        <button id="cs-wizard-close-btn" class="cs-traefik-btn-icon" title="\u0417\u0430\u043A\u0440\u044B\u0442\u044C">
+          <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
           </svg>
-        </div>
-        <div>
-          <h2 class="cs-traefik-title">\u041C\u0430\u0441\u0442\u0435\u0440 \u043D\u043E\u0432\u043E\u0433\u043E \u0441\u0435\u0440\u0432\u0438\u0441\u0430 Traefik</h2>
-          <div class="cs-traefik-subtitle">\u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435 ser-&lt;\u0438\u043C\u044F&gt;.yml \u0441 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u043E\u0439 \u043F\u0440\u0438\u0432\u044F\u0437\u043A\u043E\u0439 middlewares \u0438 TLS</div>
-        </div>
+        </button>
       </div>
-      <button id="cs-wizard-close-btn" class="cs-traefik-btn-icon" title="\u0417\u0430\u043A\u0440\u044B\u0442\u044C">
-        <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-        </svg>
-      </button>
-    </div>
 
-    <div class="cs-wizard-body">
-      <!-- Left Column: Form -->
-      <div class="cs-wizard-form">
-        <div class="cs-form-group">
-          <label class="cs-form-label">\u0418\u043C\u044F \u0441\u0435\u0440\u0432\u0438\u0441\u0430 (slug)</label>
-          <input type="text" id="cs-wizard-name" class="cs-form-input" value="${state.name}" placeholder="jellyfin, vaultwarden, api..." />
-          <div class="cs-form-hint">\u0411\u0443\u0434\u0435\u0442 \u0441\u043E\u0437\u0434\u0430\u043D \u0444\u0430\u0439\u043B: <code id="cs-wizard-target-filename">${getTargetFilename(state.rulesSubdir, state.name)}</code></div>
+      <!-- Mode Switcher Tabs -->
+      <div class="cs-wizard-tabs-bar">
+        <button id="cs-mode-btn-service" class="cs-wizard-tab-btn ${currentMode === "service" ? "active" : ""}">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+          </svg>
+          \u0421\u0435\u0440\u0432\u0438\u0441 (ser-*.yml)
+        </button>
+        <button id="cs-mode-btn-blueprint" class="cs-wizard-tab-btn ${currentMode === "blueprint" ? "active" : ""}">
+          <svg width="15" height="15" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+          </svg>
+          \u0420\u0435\u0446\u0435\u043F\u0442\u044B Middleware (mw-*.yml)
+        </button>
+      </div>
+
+      <div class="cs-wizard-body">
+        <!-- Left Column: Form -->
+        <div class="cs-wizard-form" id="cs-wizard-form-container">
+          ${currentMode === "service" ? renderServiceForm() : renderBlueprintForm()}
         </div>
 
-        <div class="cs-form-group">
-          <label class="cs-form-label">\u0414\u043E\u043C\u0435\u043D / Host</label>
-          <input type="text" id="cs-wizard-host" class="cs-form-input" value="${state.host}" placeholder="subdomain.domain.tld" />
-        </div>
-
-        <div class="cs-form-group">
-          <label class="cs-form-label">\u0411\u044D\u043A\u0435\u043D\u0434 URL (loadBalancer)</label>
-          <input type="text" id="cs-wizard-url" class="cs-form-input" value="${state.targetUrl}" placeholder="http://192.168.1.50:8080" />
-        </div>
-
-        <div class="cs-form-row">
-          <div class="cs-form-group cs-col-6">
-            <label class="cs-form-label">EntryPoint</label>
-            <select id="cs-wizard-entrypoint" class="cs-form-select">
-              <option value="websecure" selected>websecure (443 / HTTPS)</option>
-              <option value="web">web (80 / HTTP)</option>
-              <option value="traefik">traefik (Dashboard)</option>
-            </select>
+        <!-- Right Column: Live YAML Preview -->
+        <div class="cs-wizard-preview">
+          <div class="cs-preview-header">
+            <span class="cs-preview-title">\u041F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 YAML</span>
+            <span class="cs-preview-badge" id="cs-preview-badge-type">${currentMode === "service" ? "Traefik Service" : "Traefik Middleware"}</span>
           </div>
-          <div class="cs-form-group cs-col-6">
-            <label class="cs-form-label">\u041A\u0430\u0442\u0430\u043B\u043E\u0433 \u043F\u0440\u0430\u0432\u0438\u043B</label>
-            <input type="text" id="cs-wizard-rules-dir" class="cs-form-input" value="${state.rulesSubdir || "rules"}" />
-          </div>
-        </div>
-
-        <div class="cs-form-group cs-tls-box">
-          <label class="cs-checkbox-label">
-            <input type="checkbox" id="cs-wizard-tls" ${state.enableTls ? "checked" : ""} />
-            <span class="cs-checkbox-custom"></span>
-            <span class="cs-checkbox-text">\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 TLS \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043A\u0430\u0442</span>
-          </label>
-          <div id="cs-wizard-tls-fields" style="${state.enableTls ? "" : "display:none;"}margin-top:8px;">
-            <label class="cs-form-label-sub">CertResolver</label>
-            <input type="text" id="cs-wizard-cert-resolver" class="cs-form-input" value="${state.certResolver}" placeholder="letsencrypt" />
-          </div>
-        </div>
-
-        <!-- Middlewares Checklist -->
-        <div class="cs-form-group">
-          <label class="cs-form-label">
-            \u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C Middlewares
-            <span class="cs-label-badge">${availableMiddlewares.length} \u043D\u0430\u0439\u0434\u0435\u043D\u043E</span>
-          </label>
-          <div class="cs-mw-checkbox-grid">
-            ${availableMiddlewares.length > 0 ? availableMiddlewares.map(
-      (mw) => `
-                <label class="cs-mw-checkbox-card ${state.middlewares.includes(mw.id) ? "selected" : ""}">
-                  <input type="checkbox" class="cs-mw-checkbox" value="${escapeHtml2(mw.id)}" ${state.middlewares.includes(mw.id) ? "checked" : ""} />
-                  <div class="cs-mw-info">
-                    <div class="cs-mw-name">${escapeHtml2(mw.id)}</div>
-                    <div class="cs-mw-type">${escapeHtml2(mw.summary || mw.type)}</div>
-                  </div>
-                </label>
-              `
-    ).join("") : `<div class="cs-muted-box">Middlewares \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u0432 workspace. \u0421\u043E\u0437\u0434\u0430\u0439\u0442\u0435 \u0438\u0445 \u0432 mw-*.yml</div>`}
-          </div>
+          <pre class="cs-preview-code"><code id="cs-wizard-preview-code"></code></pre>
         </div>
       </div>
 
-      <!-- Right Column: Live YAML Preview -->
-      <div class="cs-wizard-preview">
-        <div class="cs-preview-header">
-          <span class="cs-preview-title">\u041F\u0440\u0435\u0434\u043F\u0440\u043E\u0441\u043C\u043E\u0442\u0440 YAML</span>
-          <span class="cs-preview-badge">Traefik Dynamic</span>
-        </div>
-        <pre class="cs-preview-code"><code id="cs-wizard-preview-code"></code></pre>
+      <div class="cs-traefik-footer">
+        <button id="cs-wizard-cancel-btn" class="cs-traefik-btn cs-traefik-btn-secondary">\u041E\u0442\u043C\u0435\u043D\u0430</button>
+        <button id="cs-wizard-submit-btn" class="cs-traefik-btn cs-traefik-btn-primary">
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+          <span id="cs-wizard-submit-label">${currentMode === "service" ? "\u0421\u043E\u0437\u0434\u0430\u0442\u044C ser-\u0444\u0430\u0439\u043B \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C" : "\u0421\u043E\u0437\u0434\u0430\u0442\u044C mw-\u0444\u0430\u0439\u043B \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C"}</span>
+        </button>
       </div>
-    </div>
+    `;
+      bindEvents();
+      updatePreview();
+    }
+    function renderServiceForm() {
+      return `
+      <div class="cs-form-group">
+        <label class="cs-form-label">\u0418\u043C\u044F \u0441\u0435\u0440\u0432\u0438\u0441\u0430 (slug)</label>
+        <input type="text" id="cs-wizard-name" class="cs-form-input" value="${escapeHtml3(
+        serviceState.name
+      )}" placeholder="jellyfin, vaultwarden, api..." />
+        <div class="cs-form-hint">\u0411\u0443\u0434\u0435\u0442 \u0441\u043E\u0437\u0434\u0430\u043D \u0444\u0430\u0439\u043B: <code id="cs-wizard-target-filename">${getTargetServiceFilename(
+        serviceState.rulesSubdir,
+        serviceState.name
+      )}</code></div>
+      </div>
 
-    <div class="cs-traefik-footer">
-      <button id="cs-wizard-cancel-btn" class="cs-traefik-btn cs-traefik-btn-secondary">\u041E\u0442\u043C\u0435\u043D\u0430</button>
-      <button id="cs-wizard-submit-btn" class="cs-traefik-btn cs-traefik-btn-primary">
-        <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-        </svg>
-        \u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0432 \u0440\u0435\u0434\u0430\u043A\u0442\u043E\u0440\u0435
-      </button>
-    </div>
-  `;
+      <div class="cs-form-group">
+        <label class="cs-form-label">\u0414\u043E\u043C\u0435\u043D / Host</label>
+        <input type="text" id="cs-wizard-host" class="cs-form-input" value="${escapeHtml3(
+        serviceState.host
+      )}" placeholder="subdomain.domain.tld" />
+      </div>
+
+      <div class="cs-form-group">
+        <label class="cs-form-label">\u0411\u044D\u043A\u0435\u043D\u0434 URL (loadBalancer)</label>
+        <input type="text" id="cs-wizard-url" class="cs-form-input" value="${escapeHtml3(
+        serviceState.targetUrl
+      )}" placeholder="http://192.168.1.50:8080" />
+      </div>
+
+      <div class="cs-form-row">
+        <div class="cs-form-group cs-col-6">
+          <label class="cs-form-label">EntryPoint</label>
+          <select id="cs-wizard-entrypoint" class="cs-form-select">
+            <option value="websecure" ${serviceState.entryPoint === "websecure" ? "selected" : ""}>websecure (443 / HTTPS)</option>
+            <option value="web" ${serviceState.entryPoint === "web" ? "selected" : ""}>web (80 / HTTP)</option>
+            <option value="traefik" ${serviceState.entryPoint === "traefik" ? "selected" : ""}>traefik (Dashboard)</option>
+          </select>
+        </div>
+        <div class="cs-form-group cs-col-6">
+          <label class="cs-form-label">\u041A\u0430\u0442\u0430\u043B\u043E\u0433 \u043F\u0440\u0430\u0432\u0438\u043B</label>
+          <input type="text" id="cs-wizard-rules-dir" class="cs-form-input" value="${escapeHtml3(
+        serviceState.rulesSubdir || "rules"
+      )}" />
+        </div>
+      </div>
+
+      <div class="cs-form-group cs-tls-box">
+        <label class="cs-checkbox-label">
+          <input type="checkbox" id="cs-wizard-tls" ${serviceState.enableTls ? "checked" : ""} />
+          <span class="cs-checkbox-custom"></span>
+          <span class="cs-checkbox-text">\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 TLS \u0441\u0435\u0440\u0442\u0438\u0444\u0438\u043A\u0430\u0442</span>
+        </label>
+        <div id="cs-wizard-tls-fields" style="${serviceState.enableTls ? "" : "display:none;"}margin-top:8px;">
+          <label class="cs-form-label-sub">CertResolver</label>
+          <input type="text" id="cs-wizard-cert-resolver" class="cs-form-input" value="${escapeHtml3(
+        serviceState.certResolver
+      )}" placeholder="letsencrypt" />
+        </div>
+      </div>
+
+      <!-- Middlewares Checklist -->
+      <div class="cs-form-group">
+        <label class="cs-form-label">
+          \u041F\u043E\u0434\u043A\u043B\u044E\u0447\u0438\u0442\u044C Middlewares
+          <span class="cs-label-badge">${availableMiddlewares.length} \u043D\u0430\u0439\u0434\u0435\u043D\u043E</span>
+        </label>
+        <div class="cs-mw-checkbox-grid">
+          ${availableMiddlewares.length > 0 ? availableMiddlewares.map(
+        (mw) => `
+              <label class="cs-mw-checkbox-card ${serviceState.middlewares.includes(mw.id) ? "selected" : ""}">
+                <input type="checkbox" class="cs-mw-checkbox" value="${escapeHtml3(mw.id)}" ${serviceState.middlewares.includes(mw.id) ? "checked" : ""} />
+                <div class="cs-mw-info">
+                  <div class="cs-mw-name">${escapeHtml3(mw.id)}</div>
+                  <div class="cs-mw-type">${escapeHtml3(mw.summary || mw.type)}</div>
+                </div>
+              </label>
+            `
+      ).join("") : `<div class="cs-muted-box">Middlewares \u043D\u0435 \u043D\u0430\u0439\u0434\u0435\u043D\u044B \u0432 workspace. \u041F\u0435\u0440\u0435\u0439\u0434\u0438\u0442\u0435 \u0432\u043E \u0432\u043A\u043B\u0430\u0434\u043A\u0443 \xAB\u0420\u0435\u0446\u0435\u043F\u0442\u044B Middleware\xBB \u0434\u043B\u044F \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u044F!</div>`}
+        </div>
+      </div>
+    `;
+    }
+    function renderBlueprintForm() {
+      const currentBp = MIDDLEWARE_BLUEPRINTS.find((b) => b.type === selectedBlueprintType) || MIDDLEWARE_BLUEPRINTS[0];
+      return `
+      <div class="cs-form-group">
+        <label class="cs-form-label">\u0412\u044B\u0431\u0435\u0440\u0438\u0442\u0435 \u0433\u043E\u0442\u043E\u0432\u044B\u0439 \u0440\u0435\u0446\u0435\u043F\u0442 Middleware</label>
+        <div class="cs-blueprint-selector-grid">
+          ${MIDDLEWARE_BLUEPRINTS.map(
+        (bp) => `
+            <div class="cs-bp-card ${bp.type === selectedBlueprintType ? "selected" : ""}" data-bp-type="${bp.type}">
+              <div class="cs-bp-card-title">${escapeHtml3(bp.title)}</div>
+              <div class="cs-bp-card-desc">${escapeHtml3(bp.description)}</div>
+            </div>
+          `
+      ).join("")}
+        </div>
+      </div>
+
+      <div class="cs-form-group" style="margin-top: 6px;">
+        <label class="cs-form-label">\u0418\u043C\u044F Middleware</label>
+        <input type="text" id="cs-bp-name-input" class="cs-form-input" value="${escapeHtml3(blueprintName)}" />
+        <div class="cs-form-hint">\u0411\u0443\u0434\u0435\u0442 \u0441\u043E\u0437\u0434\u0430\u043D \u0444\u0430\u0439\u043B: <code id="cs-wizard-target-filename">${getTargetMiddlewareFilename(
+        serviceState.rulesSubdir,
+        blueprintName
+      )}</code></div>
+      </div>
+
+      <!-- Dynamic Blueprint Fields -->
+      <div class="cs-bp-fields-box">
+        ${currentBp.fields.map((f) => {
+        const val = blueprintParams[f.key] !== void 0 ? blueprintParams[f.key] : f.defaultValue;
+        if (f.type === "boolean") {
+          return `
+                <div class="cs-form-group">
+                  <label class="cs-checkbox-label">
+                    <input type="checkbox" class="cs-bp-field" data-field-key="${f.key}" ${val ? "checked" : ""} />
+                    <span class="cs-checkbox-custom"></span>
+                    <span class="cs-checkbox-text">${escapeHtml3(f.label)}</span>
+                  </label>
+                  ${f.hint ? `<div class="cs-form-hint">${escapeHtml3(f.hint)}</div>` : ""}
+                </div>
+              `;
+        } else if (f.type === "textarea") {
+          return `
+                <div class="cs-form-group">
+                  <label class="cs-form-label">${escapeHtml3(f.label)}</label>
+                  <textarea class="cs-form-input cs-form-textarea cs-bp-field" data-field-key="${f.key}" rows="3" placeholder="${escapeHtml3(
+            f.placeholder || ""
+          )}">${escapeHtml3(String(val))}</textarea>
+                  ${f.hint ? `<div class="cs-form-hint">${escapeHtml3(f.hint)}</div>` : ""}
+                </div>
+              `;
+        } else {
+          return `
+                <div class="cs-form-group">
+                  <label class="cs-form-label">${escapeHtml3(f.label)}</label>
+                  <input type="${f.type === "number" ? "number" : "text"}" class="cs-form-input cs-bp-field" data-field-key="${f.key}" value="${escapeHtml3(String(val))}" placeholder="${escapeHtml3(f.placeholder || "")}" />
+                  ${f.hint ? `<div class="cs-form-hint">${escapeHtml3(f.hint)}</div>` : ""}
+                </div>
+              `;
+        }
+      }).join("")}
+      </div>
+    `;
+    }
     function updatePreview() {
-      const yaml = generateServiceYaml(state);
       const codeEl = modal.querySelector("#cs-wizard-preview-code");
-      if (codeEl) codeEl.textContent = yaml;
-      const fileEl = modal.querySelector("#cs-wizard-target-filename");
-      if (fileEl) fileEl.textContent = getTargetFilename(state.rulesSubdir, state.name);
+      const badgeEl = modal.querySelector("#cs-preview-badge-type");
+      const targetEl = modal.querySelector("#cs-wizard-target-filename");
+      if (currentMode === "service") {
+        const yaml = generateServiceYaml(serviceState);
+        if (codeEl) codeEl.textContent = yaml;
+        if (badgeEl) badgeEl.textContent = "Traefik Service";
+        if (targetEl) targetEl.textContent = getTargetServiceFilename(serviceState.rulesSubdir, serviceState.name);
+      } else {
+        const yaml = generateMiddlewareYaml(selectedBlueprintType, blueprintName, blueprintParams);
+        if (codeEl) codeEl.textContent = yaml;
+        if (badgeEl) badgeEl.textContent = "Traefik Middleware";
+        if (targetEl) targetEl.textContent = getTargetMiddlewareFilename(serviceState.rulesSubdir, blueprintName);
+      }
     }
     function bindEvents() {
       const close = () => {
@@ -1563,92 +2399,183 @@ ${tlsBlock}
       overlay.addEventListener("click", (e) => {
         if (e.target === overlay) close();
       });
-      const nameInput = modal.querySelector("#cs-wizard-name");
-      nameInput?.addEventListener("input", () => {
-        state.name = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, "-");
-        updatePreview();
+      modal.querySelector("#cs-mode-btn-service")?.addEventListener("click", () => {
+        if (currentMode !== "service") {
+          currentMode = "service";
+          renderModal();
+        }
       });
-      const hostInput = modal.querySelector("#cs-wizard-host");
-      hostInput?.addEventListener("input", () => {
-        state.host = hostInput.value.trim();
-        updatePreview();
+      modal.querySelector("#cs-mode-btn-blueprint")?.addEventListener("click", () => {
+        if (currentMode !== "blueprint") {
+          currentMode = "blueprint";
+          renderModal();
+        }
       });
-      const urlInput = modal.querySelector("#cs-wizard-url");
-      urlInput?.addEventListener("input", () => {
-        state.targetUrl = urlInput.value.trim();
-        updatePreview();
-      });
-      const epSelect = modal.querySelector("#cs-wizard-entrypoint");
-      epSelect?.addEventListener("change", () => {
-        state.entryPoint = epSelect.value;
-        updatePreview();
-      });
-      const rulesDirInput = modal.querySelector("#cs-wizard-rules-dir");
-      rulesDirInput?.addEventListener("input", () => {
-        state.rulesSubdir = rulesDirInput.value.trim();
-        updatePreview();
-      });
-      const tlsCheckbox = modal.querySelector("#cs-wizard-tls");
-      const tlsFields = modal.querySelector("#cs-wizard-tls-fields");
-      tlsCheckbox?.addEventListener("change", () => {
-        state.enableTls = tlsCheckbox.checked;
-        if (tlsFields) tlsFields.style.display = state.enableTls ? "" : "none";
-        updatePreview();
-      });
-      const certInput = modal.querySelector("#cs-wizard-cert-resolver");
-      certInput?.addEventListener("input", () => {
-        state.certResolver = certInput.value.trim();
-        updatePreview();
-      });
-      const mwCheckboxes = modal.querySelectorAll(".cs-mw-checkbox");
-      mwCheckboxes.forEach((cb) => {
-        cb.addEventListener("change", () => {
-          const card = cb.closest(".cs-mw-checkbox-card");
-          if (cb.checked) {
-            card?.classList.add("selected");
-          } else {
-            card?.classList.remove("selected");
-          }
-          const selected = [];
-          mwCheckboxes.forEach((c) => {
-            if (c.checked) selected.push(c.value);
-          });
-          state.middlewares = selected;
+      if (currentMode === "service") {
+        const nameInput = modal.querySelector("#cs-wizard-name");
+        nameInput?.addEventListener("input", () => {
+          serviceState.name = nameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, "-");
           updatePreview();
         });
-      });
+        const hostInput = modal.querySelector("#cs-wizard-host");
+        hostInput?.addEventListener("input", () => {
+          serviceState.host = hostInput.value.trim();
+          updatePreview();
+        });
+        const urlInput = modal.querySelector("#cs-wizard-url");
+        urlInput?.addEventListener("input", () => {
+          serviceState.targetUrl = urlInput.value.trim();
+          updatePreview();
+        });
+        const epSelect = modal.querySelector("#cs-wizard-entrypoint");
+        epSelect?.addEventListener("change", () => {
+          serviceState.entryPoint = epSelect.value;
+          updatePreview();
+        });
+        const rulesDirInput = modal.querySelector("#cs-wizard-rules-dir");
+        rulesDirInput?.addEventListener("input", () => {
+          serviceState.rulesSubdir = rulesDirInput.value.trim();
+          updatePreview();
+        });
+        const tlsCheckbox = modal.querySelector("#cs-wizard-tls");
+        const tlsFields = modal.querySelector("#cs-wizard-tls-fields");
+        tlsCheckbox?.addEventListener("change", () => {
+          serviceState.enableTls = tlsCheckbox.checked;
+          if (tlsFields) tlsFields.style.display = serviceState.enableTls ? "" : "none";
+          updatePreview();
+        });
+        const certInput = modal.querySelector("#cs-wizard-cert-resolver");
+        certInput?.addEventListener("input", () => {
+          serviceState.certResolver = certInput.value.trim();
+          updatePreview();
+        });
+        const mwCheckboxes = modal.querySelectorAll(".cs-mw-checkbox");
+        mwCheckboxes.forEach((cb) => {
+          cb.addEventListener("change", () => {
+            const card = cb.closest(".cs-mw-checkbox-card");
+            if (cb.checked) {
+              card?.classList.add("selected");
+            } else {
+              card?.classList.remove("selected");
+            }
+            const selected = [];
+            mwCheckboxes.forEach((c) => {
+              if (c.checked) selected.push(c.value);
+            });
+            serviceState.middlewares = selected;
+            updatePreview();
+          });
+        });
+      } else {
+        const bpCards = modal.querySelectorAll("[data-bp-type]");
+        bpCards.forEach((card) => {
+          card.addEventListener("click", () => {
+            const type = card.getAttribute("data-bp-type");
+            if (type && type !== selectedBlueprintType) {
+              selectedBlueprintType = type;
+              const bp = MIDDLEWARE_BLUEPRINTS.find((b) => b.type === type);
+              if (bp) {
+                blueprintName = bp.defaultName;
+                bp.fields.forEach((f) => {
+                  blueprintParams[f.key] = f.defaultValue;
+                });
+              }
+              renderModal();
+            }
+          });
+        });
+        const bpNameInput = modal.querySelector("#cs-bp-name-input");
+        bpNameInput?.addEventListener("input", () => {
+          blueprintName = bpNameInput.value.trim().toLowerCase().replace(/[^a-z0-9\-]/g, "-");
+          updatePreview();
+        });
+        const fieldInputs = modal.querySelectorAll(".cs-bp-field");
+        fieldInputs.forEach((el) => {
+          const key = el.getAttribute("data-field-key");
+          if (!key) return;
+          el.addEventListener("input", () => {
+            if (el.type === "checkbox") {
+              blueprintParams[key] = el.checked;
+            } else {
+              blueprintParams[key] = el.value;
+            }
+            updatePreview();
+          });
+          el.addEventListener("change", () => {
+            if (el.type === "checkbox") {
+              blueprintParams[key] = el.checked;
+            } else {
+              blueprintParams[key] = el.value;
+            }
+            updatePreview();
+          });
+        });
+      }
       const submitBtn = modal.querySelector("#cs-wizard-submit-btn");
       submitBtn?.addEventListener("click", async () => {
-        if (!state.name) {
-          alert("\u041F\u043E\u0436\u0430\u043B\u0443\u0439\u0441\u0442\u0430, \u0443\u043A\u0430\u0436\u0438\u0442\u0435 \u0438\u043C\u044F \u0441\u0435\u0440\u0432\u0438\u0441\u0430");
-          return;
-        }
-        submitBtn.disabled = true;
-        submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435...";
-        const targetPath = getTargetFilename(state.rulesSubdir, state.name);
-        const yamlContent = generateServiceYaml(state);
-        try {
-          const cs = window.ConfigStudio;
-          if (cs?.createFile) {
-            await cs.createFile(targetPath, yamlContent);
-            await cs.refreshFiles?.();
-            await indexer.scanWorkspace();
-            cs.showNotification?.(`\u0421\u0435\u0440\u0432\u0438\u0441 '${state.name}' \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u043D \u0432 ${targetPath}`, "success");
-          } else {
-            await fetch("/api/fs/file", {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "X-ConfigStudio-Web": "1" },
-              body: JSON.stringify({ path: targetPath, content: yamlContent })
-            });
-            await indexer.scanWorkspace();
-            cs?.openFile?.(targetPath, { line: 1, highlight: true });
+        const cs = window.ConfigStudio;
+        if (currentMode === "service") {
+          if (!serviceState.name) {
+            alert("\u041F\u043E\u0436\u0430\u043B\u0443\u0439\u0441\u0442\u0430, \u0443\u043A\u0430\u0436\u0438\u0442\u0435 \u0438\u043C\u044F \u0441\u0435\u0440\u0432\u0438\u0441\u0430");
+            return;
           }
-          close();
-          if (onCreated) onCreated(targetPath);
-        } catch (err) {
-          alert(`\u041E\u0448\u0438\u0431\u043A\u0430 \u043F\u0440\u0438 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0438 \u0441\u0435\u0440\u0432\u0438\u0441\u0430: ${err.message}`);
-          submitBtn.disabled = false;
-          submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u0442\u044C \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C \u0432 \u0440\u0435\u0434\u0430\u043A\u0442\u043E\u0440\u0435";
+          submitBtn.disabled = true;
+          submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435...";
+          const targetPath = getTargetServiceFilename(serviceState.rulesSubdir, serviceState.name);
+          const yamlContent = generateServiceYaml(serviceState);
+          try {
+            if (cs?.createFile) {
+              await cs.createFile(targetPath, yamlContent);
+              await cs.refreshFiles?.();
+              await indexer.scanWorkspace();
+              cs.showNotification?.(`\u0421\u0435\u0440\u0432\u0438\u0441 '${serviceState.name}' \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u043D \u0432 ${targetPath}`, "success");
+            } else {
+              await fetch("/api/fs/file", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-ConfigStudio-Web": "1" },
+                body: JSON.stringify({ path: targetPath, content: yamlContent })
+              });
+              await indexer.scanWorkspace();
+              cs?.openFile?.(targetPath, { line: 1, highlight: true });
+            }
+            close();
+            if (onCreated) onCreated(targetPath);
+          } catch (err) {
+            alert(`\u041E\u0448\u0438\u0431\u043A\u0430 \u043F\u0440\u0438 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0438 \u0441\u0435\u0440\u0432\u0438\u0441\u0430: ${err.message}`);
+            submitBtn.disabled = false;
+            submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u0442\u044C ser-\u0444\u0430\u0439\u043B \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C";
+          }
+        } else {
+          if (!blueprintName) {
+            alert("\u041F\u043E\u0436\u0430\u043B\u0443\u0439\u0441\u0442\u0430, \u0443\u043A\u0430\u0436\u0438\u0442\u0435 \u0438\u043C\u044F middleware");
+            return;
+          }
+          submitBtn.disabled = true;
+          submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u043D\u0438\u0435...";
+          const targetPath = getTargetMiddlewareFilename(serviceState.rulesSubdir, blueprintName);
+          const yamlContent = generateMiddlewareYaml(selectedBlueprintType, blueprintName, blueprintParams);
+          try {
+            if (cs?.createFile) {
+              await cs.createFile(targetPath, yamlContent);
+              await cs.refreshFiles?.();
+              await indexer.scanWorkspace();
+              cs.showNotification?.(`Middleware '${blueprintName}' \u0443\u0441\u043F\u0435\u0448\u043D\u043E \u0441\u043E\u0437\u0434\u0430\u043D \u0432 ${targetPath}`, "success");
+            } else {
+              await fetch("/api/fs/file", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", "X-ConfigStudio-Web": "1" },
+                body: JSON.stringify({ path: targetPath, content: yamlContent })
+              });
+              await indexer.scanWorkspace();
+              cs?.openFile?.(targetPath, { line: 1, highlight: true });
+            }
+            close();
+            if (onCreated) onCreated(targetPath);
+          } catch (err) {
+            alert(`\u041E\u0448\u0438\u0431\u043A\u0430 \u043F\u0440\u0438 \u0441\u043E\u0437\u0434\u0430\u043D\u0438\u0438 middleware: ${err.message}`);
+            submitBtn.disabled = false;
+            submitBtn.textContent = "\u0421\u043E\u0437\u0434\u0430\u0442\u044C mw-\u0444\u0430\u0439\u043B \u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u044C";
+          }
         }
       });
     }
@@ -1661,15 +2588,22 @@ ${tlsBlock}
     document.addEventListener("keydown", handleKey);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
-    updatePreview();
-    bindEvents();
+    renderModal();
   }
-  function getTargetFilename(rulesDir, name) {
+  function getTargetServiceFilename(rulesDir, name) {
     const dir = rulesDir ? rulesDir.replace(/[\\/]$/, "") : "rules";
     const slug = (name || "service").replace(/[^a-z0-9\-]/g, "-");
     return dir ? `${dir}/ser-${slug}.yml` : `ser-${slug}.yml`;
   }
-  function escapeHtml2(str) {
+  function getTargetMiddlewareFilename(rulesDir, name) {
+    const dir = rulesDir ? rulesDir.replace(/[\\/]$/, "") : "rules";
+    let slug = (name || "middleware").replace(/[^a-z0-9\-]/g, "-");
+    if (!slug.startsWith("mw-")) {
+      slug = `mw-${slug}`;
+    }
+    return dir ? `${dir}/${slug}.yml` : `${slug}.yml`;
+  }
+  function escapeHtml3(str) {
     if (!str) return "";
     return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -1913,7 +2847,40 @@ ${tlsBlock}
       title: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u041C\u0430\u0442\u0440\u0438\u0446\u0443 \u043F\u0440\u0430\u0432\u0438\u043B \u0438 \u0441\u0435\u0440\u0432\u0438\u0441\u043E\u0432 Traefik",
       icon: "network",
       onClick: () => {
-        openMatrixModal(indexer, () => openWizardModal(indexer));
+        openMatrixModal(
+          indexer,
+          () => openWizardModal(indexer),
+          () => openDoctorModal(indexer, () => openMatrixModal(indexer, () => openWizardModal(indexer)))
+        );
+      }
+    });
+    cs.registerToolbarButton?.({
+      id: "cs-btn-traefik-doctor",
+      pluginId: "traefik",
+      label: "Traefik Doctor",
+      title: "\u0417\u0430\u043F\u0443\u0441\u0442\u0438\u0442\u044C \u0434\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u043A\u0443 Traefik Doctor (\u043B\u043E\u043A\u0430\u043B\u044C\u043D\u044B\u0439 \u0430\u0443\u0434\u0438\u0442 \u0438 Traefik API)",
+      icon: "check-circle",
+      onClick: () => {
+        openDoctorModal(
+          indexer,
+          () => openMatrixModal(
+            indexer,
+            () => openWizardModal(indexer),
+            () => openDoctorModal(indexer)
+          )
+        );
+      }
+    });
+    cs.registerToolbarButton?.({
+      id: "cs-btn-traefik-dashboard",
+      pluginId: "traefik",
+      label: "Dashboard",
+      title: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C Web UI Traefik Dashboard \u0432 \u043D\u043E\u0432\u043E\u0439 \u0432\u043A\u043B\u0430\u0434\u043A\u0435",
+      icon: "terminal",
+      onClick: () => {
+        const apiUrl = localStorage.getItem("cs_traefik_api_url") || "http://localhost:8080";
+        const dashboardUrl = `${apiUrl.replace(/\/+$/, "")}/dashboard/`;
+        window.open(dashboardUrl, "_blank");
       }
     });
     cs.registerContextMenu?.({
@@ -1925,19 +2892,56 @@ ${tlsBlock}
       fileMatches: [".yml", ".yaml"],
       targetType: "any",
       onClick: () => {
-        openMatrixModal(indexer, () => openWizardModal(indexer));
+        openMatrixModal(
+          indexer,
+          () => openWizardModal(indexer),
+          () => openDoctorModal(indexer)
+        );
       }
     });
     cs.registerContextMenu?.({
-      id: "cs-ctx-traefik-wizard",
-      label: "Traefik: \u041D\u043E\u0432\u044B\u0439 \u0441\u0435\u0440\u0432\u0438\u0441 (Wizard)",
-      icon: "plus",
-      group: "edit",
+      id: "cs-ctx-traefik-doctor",
+      label: "Traefik: Doctor (\u0414\u0438\u0430\u0433\u043D\u043E\u0441\u0442\u0438\u043A\u0430)",
+      icon: "check-circle",
+      group: "tools",
       order: 41,
       fileMatches: [".yml", ".yaml"],
       targetType: "any",
       onClick: () => {
+        openDoctorModal(
+          indexer,
+          () => openMatrixModal(
+            indexer,
+            () => openWizardModal(indexer),
+            () => openDoctorModal(indexer)
+          )
+        );
+      }
+    });
+    cs.registerContextMenu?.({
+      id: "cs-ctx-traefik-wizard",
+      label: "Traefik: \u041D\u043E\u0432\u044B\u0439 \u0441\u0435\u0440\u0432\u0438\u0441 / \u0420\u0435\u0446\u0435\u043F\u0442",
+      icon: "plus",
+      group: "edit",
+      order: 42,
+      fileMatches: [".yml", ".yaml"],
+      targetType: "any",
+      onClick: () => {
         openWizardModal(indexer);
+      }
+    });
+    cs.registerContextMenu?.({
+      id: "cs-ctx-traefik-dashboard",
+      label: "Traefik: \u041E\u0442\u043A\u0440\u044B\u0442\u044C Dashboard",
+      icon: "terminal",
+      group: "view",
+      order: 43,
+      fileMatches: [".yml", ".yaml"],
+      targetType: "any",
+      onClick: () => {
+        const apiUrl = localStorage.getItem("cs_traefik_api_url") || "http://localhost:8080";
+        const dashboardUrl = `${apiUrl.replace(/\/+$/, "")}/dashboard/`;
+        window.open(dashboardUrl, "_blank");
       }
     });
     if (cs.services?.register) {
@@ -1947,8 +2951,25 @@ ${tlsBlock}
           getIndex: () => indexer.getIndex(),
           scanWorkspace: () => indexer.scanWorkspace(),
           findDefinition: (ref) => indexer.findDefinition(ref),
-          openMatrix: () => openMatrixModal(indexer, () => openWizardModal(indexer)),
-          openWizard: () => openWizardModal(indexer)
+          openMatrix: () => openMatrixModal(
+            indexer,
+            () => openWizardModal(indexer),
+            () => openDoctorModal(indexer)
+          ),
+          openWizard: (mode) => openWizardModal(indexer, void 0, mode || "service"),
+          openDoctor: () => openDoctorModal(
+            indexer,
+            () => openMatrixModal(
+              indexer,
+              () => openWizardModal(indexer),
+              () => openDoctorModal(indexer)
+            )
+          ),
+          openDashboard: (customUrl) => {
+            const apiUrl = customUrl || localStorage.getItem("cs_traefik_api_url") || "http://localhost:8080";
+            const dashboardUrl = `${apiUrl.replace(/\/+$/, "")}/dashboard/`;
+            window.open(dashboardUrl, "_blank");
+          }
         },
         "traefik"
       );

@@ -1,8 +1,8 @@
 {
   "id": "traefik",
   "name": "Traefik Dynamic Configuration",
-  "version": "1.0.0",
-  "description": "Multi-file rules directory provider, cross-file @file autocomplete, go-to-definition, rules matrix and new service wizard for Traefik",
+  "version": "1.1.0",
+  "description": "Multi-file rules directory provider, cross-file @file autocomplete, go-to-definition, rules matrix, blueprints and Traefik Doctor",
   "author": "Config Studio Team",
   "icon": "network",
   "entry": "main.js",

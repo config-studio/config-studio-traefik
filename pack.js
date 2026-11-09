@@ -17,18 +17,20 @@ for (const file of requiredFiles) {
 }
 
 const csDir = path.join(__dirname, '..', 'config-studio');
-const pkg1 = path.join(__dirname, 'traefik-1.0.0.cspkg');
+const pluginJson = JSON.parse(fs.readFileSync(path.join(__dirname, 'plugin.json'), 'utf8'));
+const version = pluginJson.version || '1.1.0';
+const pkgVersioned = path.join(__dirname, `traefik-${version}.cspkg`);
 const pkgLatest = path.join(__dirname, 'traefik.cspkg');
 
-console.log('[Pack] Packaging with cspkg CLI...');
-execSync(`go run ./cmd/cspkg pack "${dist}" -o "${pkg1}"`, { cwd: csDir, stdio: 'inherit' });
-fs.copyFileSync(pkg1, pkgLatest);
+console.log(`[Pack] Packaging v${version} with cspkg CLI...`);
+execSync(`go run ./cmd/cspkg pack "${dist}" -o "${pkgVersioned}"`, { cwd: csDir, stdio: 'inherit' });
+fs.copyFileSync(pkgVersioned, pkgLatest);
 
 // Also copy to config-studio-plugins repository
 const pluginsPackagesDir = path.join(__dirname, '..', 'config-studio-plugins', 'packages');
 if (fs.existsSync(pluginsPackagesDir)) {
-  fs.copyFileSync(pkg1, path.join(pluginsPackagesDir, 'traefik-1.0.0.cspkg'));
-  fs.copyFileSync(pkg1, path.join(pluginsPackagesDir, 'traefik.cspkg'));
+  fs.copyFileSync(pkgVersioned, path.join(pluginsPackagesDir, `traefik-${version}.cspkg`));
+  fs.copyFileSync(pkgVersioned, path.join(pluginsPackagesDir, 'traefik.cspkg'));
   console.log('[Pack] Copied package to config-studio-plugins/packages/');
 }
 

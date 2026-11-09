@@ -1,6 +1,7 @@
 import { FsProvider, TraefikWorkspaceIndexer } from './indexer';
 import { extractTokenAtPosition, setupMonacoTraefik } from './monacoProvider';
 import { createTraefikOutlineProvider } from './outlineProvider';
+import { openDoctorModal } from './ui/doctorModal';
 import { openMatrixModal } from './ui/matrixModal';
 import { openWizardModal } from './ui/wizardModal';
 
@@ -290,7 +291,7 @@ class StudioFsProvider implements FsProvider {
     }
   }, 2000);
 
-  // Register Toolbar Button
+  // Register Toolbar Buttons
   cs.registerToolbarButton?.({
     id: 'cs-btn-traefik-matrix',
     pluginId: 'traefik',
@@ -298,7 +299,41 @@ class StudioFsProvider implements FsProvider {
     title: 'Открыть Матрицу правил и сервисов Traefik',
     icon: 'network',
     onClick: () => {
-      openMatrixModal(indexer, () => openWizardModal(indexer));
+      openMatrixModal(
+        indexer,
+        () => openWizardModal(indexer),
+        () => openDoctorModal(indexer, () => openMatrixModal(indexer, () => openWizardModal(indexer)))
+      );
+    },
+  });
+
+  cs.registerToolbarButton?.({
+    id: 'cs-btn-traefik-doctor',
+    pluginId: 'traefik',
+    label: 'Traefik Doctor',
+    title: 'Запустить диагностику Traefik Doctor (локальный аудит и Traefik API)',
+    icon: 'check-circle',
+    onClick: () => {
+      openDoctorModal(indexer, () =>
+        openMatrixModal(
+          indexer,
+          () => openWizardModal(indexer),
+          () => openDoctorModal(indexer)
+        )
+      );
+    },
+  });
+
+  cs.registerToolbarButton?.({
+    id: 'cs-btn-traefik-dashboard',
+    pluginId: 'traefik',
+    label: 'Dashboard',
+    title: 'Открыть Web UI Traefik Dashboard в новой вкладке',
+    icon: 'terminal',
+    onClick: () => {
+      const apiUrl = localStorage.getItem('cs_traefik_api_url') || 'http://localhost:8080';
+      const dashboardUrl = `${apiUrl.replace(/\/+$/, '')}/dashboard/`;
+      window.open(dashboardUrl, '_blank');
     },
   });
 
@@ -312,20 +347,58 @@ class StudioFsProvider implements FsProvider {
     fileMatches: ['.yml', '.yaml'],
     targetType: 'any',
     onClick: () => {
-      openMatrixModal(indexer, () => openWizardModal(indexer));
+      openMatrixModal(
+        indexer,
+        () => openWizardModal(indexer),
+        () => openDoctorModal(indexer)
+      );
+    },
+  });
+
+  cs.registerContextMenu?.({
+    id: 'cs-ctx-traefik-doctor',
+    label: 'Traefik: Doctor (Диагностика)',
+    icon: 'check-circle',
+    group: 'tools',
+    order: 41,
+    fileMatches: ['.yml', '.yaml'],
+    targetType: 'any',
+    onClick: () => {
+      openDoctorModal(indexer, () =>
+        openMatrixModal(
+          indexer,
+          () => openWizardModal(indexer),
+          () => openDoctorModal(indexer)
+        )
+      );
     },
   });
 
   cs.registerContextMenu?.({
     id: 'cs-ctx-traefik-wizard',
-    label: 'Traefik: Новый сервис (Wizard)',
+    label: 'Traefik: Новый сервис / Рецепт',
     icon: 'plus',
     group: 'edit',
-    order: 41,
+    order: 42,
     fileMatches: ['.yml', '.yaml'],
     targetType: 'any',
     onClick: () => {
       openWizardModal(indexer);
+    },
+  });
+
+  cs.registerContextMenu?.({
+    id: 'cs-ctx-traefik-dashboard',
+    label: 'Traefik: Открыть Dashboard',
+    icon: 'terminal',
+    group: 'view',
+    order: 43,
+    fileMatches: ['.yml', '.yaml'],
+    targetType: 'any',
+    onClick: () => {
+      const apiUrl = localStorage.getItem('cs_traefik_api_url') || 'http://localhost:8080';
+      const dashboardUrl = `${apiUrl.replace(/\/+$/, '')}/dashboard/`;
+      window.open(dashboardUrl, '_blank');
     },
   });
 
@@ -337,8 +410,26 @@ class StudioFsProvider implements FsProvider {
         getIndex: () => indexer.getIndex(),
         scanWorkspace: () => indexer.scanWorkspace(),
         findDefinition: (ref: string) => indexer.findDefinition(ref),
-        openMatrix: () => openMatrixModal(indexer, () => openWizardModal(indexer)),
-        openWizard: () => openWizardModal(indexer),
+        openMatrix: () =>
+          openMatrixModal(
+            indexer,
+            () => openWizardModal(indexer),
+            () => openDoctorModal(indexer)
+          ),
+        openWizard: (mode?: 'service' | 'blueprint') => openWizardModal(indexer, undefined, mode || 'service'),
+        openDoctor: () =>
+          openDoctorModal(indexer, () =>
+            openMatrixModal(
+              indexer,
+              () => openWizardModal(indexer),
+              () => openDoctorModal(indexer)
+            )
+          ),
+        openDashboard: (customUrl?: string) => {
+          const apiUrl = customUrl || localStorage.getItem('cs_traefik_api_url') || 'http://localhost:8080';
+          const dashboardUrl = `${apiUrl.replace(/\/+$/, '')}/dashboard/`;
+          window.open(dashboardUrl, '_blank');
+        },
       },
       'traefik'
     );
