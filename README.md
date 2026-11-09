@@ -2,7 +2,7 @@
 
 [![Config Studio Plugin](https://img.shields.io/badge/Config%20Studio-Plugin%20v2.0%2B-0284c7)](https://github.com/config-studio/config-studio)
 [![Format](https://img.shields.io/badge/package-cspkg%20v1-10b981)](https://github.com/config-studio/config-studio)
-[![Tests](https://img.shields.io/badge/tests-10%2F10%20passing-success)](https://github.com/config-studio/config-studio-traefik)
+[![Tests](https://img.shields.io/badge/tests-26%2F26%20passing-success)](https://github.com/config-studio/config-studio-traefik)
 
 Официальный плагин Config Studio для работы с динамической конфигурацией **Traefik Reverse Proxy** при архитектуре раздельных файлов правил (`Multi-File Directory Provider`, например `/etc/traefik/rules/` или `rules/*.yml`).
 
