@@ -1,12 +1,47 @@
 /* ==========================================================================
    Config Studio — Traefik Dynamic Configuration Plugin Stylesheet
+   Adapted for Core Design System v2.0 (Full Light/Dark Theme Support & WCAG AAA)
    ========================================================================== */
+
+:root {
+  --cs-tf-bg-base: var(--color-base, #161b22);
+  --cs-tf-bg-surface: var(--color-surface, #21262d);
+  --cs-tf-bg-surface-hover: var(--color-surface-hover, #30363d);
+  --cs-tf-bg-subtle: rgba(255, 255, 255, 0.04);
+  --cs-tf-border: var(--color-border, #30363d);
+  --cs-tf-border-subtle: rgba(255, 255, 255, 0.08);
+  --cs-tf-text-primary: var(--text-primary, #f8fafc);
+  --cs-tf-text-secondary: var(--text-secondary, #cbd5e1);
+  --cs-tf-text-muted: var(--text-muted, #94a3b8);
+  --cs-tf-accent: var(--color-accent, #00d2b4);
+  --cs-tf-accent-hover: var(--color-accent-hover, #00b89e);
+  --cs-tf-overlay: rgba(15, 23, 42, 0.75);
+  --cs-tf-code-bg: #0b1120;
+}
+
+html:not(.dark),
+.theme-light,
+.theme-light-active {
+  --cs-tf-bg-base: var(--color-base, #f8fafc);
+  --cs-tf-bg-surface: var(--color-surface, #ffffff);
+  --cs-tf-bg-surface-hover: var(--color-surface-hover, #f1f5f9);
+  --cs-tf-bg-subtle: #f8fafc;
+  --cs-tf-border: var(--color-border, #e2e8f0);
+  --cs-tf-border-subtle: #e2e8f0;
+  --cs-tf-text-primary: var(--text-primary, #0f172a);
+  --cs-tf-text-secondary: var(--text-secondary, #334155);
+  --cs-tf-text-muted: var(--text-muted, #64748b);
+  --cs-tf-accent: var(--color-accent, #0284c7);
+  --cs-tf-accent-hover: var(--color-accent-hover, #0369a1);
+  --cs-tf-overlay: rgba(15, 23, 42, 0.5);
+  --cs-tf-code-bg: #f1f5f9;
+}
 
 /* --- Modal Overlay & Containers --- */
 .cs-traefik-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(15, 23, 42, 0.78);
+  background-color: var(--cs-tf-overlay);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   display: flex;
@@ -23,15 +58,16 @@
 }
 
 .cs-traefik-modal {
-  background-color: #1e293b;
-  border: 1px solid rgba(51, 65, 85, 0.9);
+  background-color: var(--cs-tf-bg-surface);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 14px;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--cs-tf-border-subtle);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
   max-height: 90vh;
+  font-family: inherit;
 }
 
 .cs-traefik-modal-xl {
@@ -51,8 +87,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
-  background-color: rgba(15, 23, 42, 0.6);
+  border-bottom: 1px solid var(--cs-tf-border);
+  background-color: var(--cs-tf-bg-subtle);
   flex-shrink: 0;
 }
 
@@ -77,13 +113,13 @@
 .cs-traefik-title {
   font-size: 16px;
   font-weight: 600;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
   margin: 0;
 }
 
 .cs-traefik-subtitle {
   font-size: 12px;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   margin-top: 2px;
 }
 
@@ -121,20 +157,20 @@
 }
 
 .cs-traefik-btn-secondary {
-  background-color: rgba(51, 65, 85, 0.6);
-  color: #e2e8f0;
-  border-color: rgba(71, 85, 105, 0.7);
+  background-color: var(--cs-tf-bg-surface-hover);
+  color: var(--cs-tf-text-primary);
+  border: 1px solid var(--cs-tf-border);
 }
 
 .cs-traefik-btn-secondary:hover {
-  background-color: rgba(71, 85, 105, 0.8);
-  color: #ffffff;
+  background-color: var(--cs-tf-bg-subtle);
+  color: var(--cs-tf-text-primary);
 }
 
 .cs-traefik-btn-icon {
   background: transparent;
   border: none;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   padding: 6px;
   border-radius: 6px;
   cursor: pointer;
@@ -145,8 +181,8 @@
 }
 
 .cs-traefik-btn-icon:hover {
-  background-color: rgba(51, 65, 85, 0.6);
-  color: #f8fafc;
+  background-color: var(--cs-tf-bg-surface-hover);
+  color: var(--cs-tf-text-primary);
 }
 
 /* --- Stats Metrics --- */
@@ -155,14 +191,14 @@
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   padding: 14px 20px;
-  background-color: rgba(15, 23, 42, 0.4);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
+  background-color: var(--cs-tf-bg-subtle);
+  border-bottom: 1px solid var(--cs-tf-border);
   flex-shrink: 0;
 }
 
 .cs-traefik-stat-card {
-  background-color: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: var(--cs-tf-bg-surface);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 10px;
   padding: 10px 14px;
 }
@@ -175,7 +211,7 @@
 
 .cs-traefik-stat-label {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   margin-top: 2px;
 }
 
@@ -189,8 +225,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 10px 20px;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.5);
-  background-color: rgba(30, 41, 59, 0.4);
+  border-bottom: 1px solid var(--cs-tf-border);
+  background-color: var(--cs-tf-bg-subtle);
   gap: 16px;
   flex-shrink: 0;
 }
@@ -212,12 +248,12 @@
 
 .cs-traefik-search-box input {
   width: 100%;
-  background-color: rgba(15, 23, 42, 0.7);
-  border: 1px solid rgba(51, 65, 85, 0.8);
+  background-color: var(--cs-tf-bg-base);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 8px;
   padding: 7px 12px 7px 32px;
   font-size: 12px;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
   outline: none;
   transition: border-color 0.15s;
 }
@@ -235,7 +271,7 @@
 .cs-traefik-filter-tab {
   background: transparent;
   border: none;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   font-size: 12px;
   font-weight: 500;
   padding: 6px 12px;
@@ -245,8 +281,8 @@
 }
 
 .cs-traefik-filter-tab:hover {
-  color: #f8fafc;
-  background-color: rgba(51, 65, 85, 0.4);
+  color: var(--cs-tf-text-primary);
+  background-color: var(--cs-tf-bg-surface-hover);
 }
 
 .cs-traefik-filter-tab.active {
@@ -329,20 +365,25 @@
 }
 
 .cs-traefik-table th {
+  background-color: var(--cs-tf-bg-subtle);
+  color: var(--cs-tf-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--cs-tf-border);
   position: sticky;
   top: 0;
-  background-color: #0f172a;
-  color: #94a3b8;
-  font-weight: 600;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.8);
-  white-space: nowrap;
   z-index: 10;
 }
 
 .cs-traefik-table td {
   padding: 10px 14px;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+  border-bottom: 1px solid var(--cs-tf-border-subtle);
+  font-size: 12px;
+  color: var(--cs-tf-text-primary);
   vertical-align: middle;
 }
 
@@ -666,8 +707,9 @@
 .cs-wizard-preview {
   display: flex;
   flex-direction: column;
-  background-color: #0b1120;
+  background-color: var(--cs-tf-code-bg);
   overflow: hidden;
+  border-left: 1px solid var(--cs-tf-border);
 }
 
 .cs-preview-header {
@@ -675,14 +717,14 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  border-bottom: 1px solid rgba(51, 65, 85, 0.6);
-  background-color: rgba(15, 23, 42, 0.5);
+  border-bottom: 1px solid var(--cs-tf-border);
+  background-color: var(--cs-tf-bg-subtle);
 }
 
 .cs-preview-title {
   font-size: 12px;
   font-weight: 600;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
 }
 
 .cs-preview-badge {
@@ -701,7 +743,7 @@
   font-family: 'JetBrains Mono', Consolas, 'Fira Code', monospace;
   font-size: 12px;
   line-height: 1.6;
-  color: #e2e8f0;
+  color: var(--cs-tf-text-primary);
 }
 
 .cs-traefik-footer {
@@ -710,8 +752,8 @@
   justify-content: flex-end;
   gap: 10px;
   padding: 14px 20px;
-  border-top: 1px solid rgba(51, 65, 85, 0.8);
-  background-color: rgba(15, 23, 42, 0.6);
+  border-top: 1px solid var(--cs-tf-border);
+  background-color: var(--cs-tf-bg-subtle);
   flex-shrink: 0;
 }
 
@@ -794,8 +836,8 @@
 }
 
 .cs-bp-card {
-  background-color: rgba(30, 41, 59, 0.7);
-  border: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: var(--cs-tf-bg-surface);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 8px;
   padding: 10px 12px;
   cursor: pointer;
@@ -806,8 +848,8 @@
 }
 
 .cs-bp-card:hover {
-  border-color: #38bdf8;
-  background-color: rgba(30, 41, 59, 0.95);
+  border-color: var(--cs-tf-accent);
+  background-color: var(--cs-tf-bg-surface-hover);
   transform: translateY(-1px);
 }
 
@@ -820,12 +862,12 @@
 .cs-bp-card-title {
   font-size: 12px;
   font-weight: 600;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
 }
 
 .cs-bp-card-desc {
   font-size: 10.5px;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -838,8 +880,8 @@
   flex-direction: column;
   gap: 12px;
   padding: 12px;
-  background-color: rgba(15, 23, 42, 0.4);
-  border: 1px solid rgba(51, 65, 85, 0.5);
+  background-color: var(--cs-tf-bg-subtle);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 8px;
 }
 
@@ -887,14 +929,14 @@
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   padding: 14px 20px;
-  background-color: rgba(15, 23, 42, 0.4);
-  border-bottom: 1px solid rgba(51, 65, 85, 0.7);
+  background-color: var(--cs-tf-bg-subtle);
+  border-bottom: 1px solid var(--cs-tf-border);
   flex-shrink: 0;
 }
 
 .cs-doctor-metric-card {
-  background-color: rgba(30, 41, 59, 0.6);
-  border: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: var(--cs-tf-bg-surface);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 8px;
   padding: 10px 14px;
 }
@@ -916,12 +958,12 @@
 .cs-metric-num {
   font-size: 20px;
   font-weight: 700;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
 }
 
 .cs-metric-label {
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--cs-tf-text-muted);
   margin-top: 2px;
 }
 
@@ -932,8 +974,8 @@
 }
 
 .cs-doctor-section {
-  background-color: rgba(30, 41, 59, 0.4);
-  border: 1px solid rgba(51, 65, 85, 0.6);
+  background-color: var(--cs-tf-bg-surface);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 10px;
   padding: 16px;
 }
@@ -951,13 +993,13 @@
   gap: 8px;
   font-size: 13px;
   font-weight: 600;
-  color: #f1f5f9;
+  color: var(--cs-tf-text-primary);
 }
 
 .cs-section-badge {
   font-size: 11px;
-  background-color: rgba(51, 65, 85, 0.6);
-  color: #cbd5e1;
+  background-color: var(--cs-tf-bg-surface-hover);
+  color: var(--cs-tf-text-secondary);
   padding: 2px 8px;
   border-radius: 12px;
 }
@@ -1007,11 +1049,11 @@
 }
 
 .cs-api-input {
-  background-color: rgba(15, 23, 42, 0.8);
-  border: 1px solid rgba(51, 65, 85, 0.8);
+  background-color: var(--cs-tf-bg-base);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 6px;
   padding: 6px 10px;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
   font-size: 12px;
   font-family: 'JetBrains Mono', Consolas, monospace;
   width: 220px;
@@ -1046,8 +1088,8 @@
 }
 
 .cs-api-detail-item {
-  background-color: rgba(15, 23, 42, 0.5);
-  border: 1px solid rgba(51, 65, 85, 0.5);
+  background-color: var(--cs-tf-bg-subtle);
+  border: 1px solid var(--cs-tf-border);
   border-radius: 6px;
   padding: 8px 12px;
 }
@@ -1060,7 +1102,7 @@
 .cs-detail-val {
   font-size: 14px;
   font-weight: 600;
-  color: #f8fafc;
+  color: var(--cs-tf-text-primary);
   margin-top: 2px;
 }
 
