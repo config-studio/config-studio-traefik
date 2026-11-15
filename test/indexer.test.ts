@@ -109,4 +109,52 @@ http:
     // config.yaml has no traefik rules, should not be included in traefik files
     assert.deepEqual(index.files, ['rules/app.yml']);
   });
+
+  it('should use batchRead when available to index files in a single pass', async () => {
+    const fileContents: Record<string, string> = {
+      'rules/mw-test.yml': `
+http:
+  middlewares:
+    mw-custom:
+      headers:
+        sslRedirect: true
+`,
+      'rules/ser-test.yml': `
+http:
+  services:
+    ser-custom:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:8080"
+`,
+    };
+
+    let batchReadCalled = false;
+    let readFileCalls = 0;
+
+    const mockFs = {
+      listFiles: async () => Object.keys(fileContents),
+      readFile: async (path: string) => {
+        readFileCalls++;
+        return fileContents[path] || '';
+      },
+      batchRead: async (req: { paths?: string[] }) => {
+        batchReadCalled = true;
+        const res: Record<string, string> = {};
+        for (const p of req.paths || []) {
+          if (fileContents[p]) res[p] = fileContents[p];
+        }
+        return res;
+      },
+    };
+
+    const indexer = new TraefikWorkspaceIndexer(mockFs);
+    const index = await indexer.scanWorkspace();
+
+    assert.equal(batchReadCalled, true);
+    assert.equal(readFileCalls, 0);
+    assert.equal(index.files.length, 2);
+    assert.ok(index.middlewares.has('mw-custom'));
+    assert.ok(index.services.has('ser-custom'));
+  });
 });

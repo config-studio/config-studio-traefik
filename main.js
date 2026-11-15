@@ -400,9 +400,21 @@ var ConfigStudioTraefikPlugin = (() => {
           detectedRulesDir = "rules";
         }
         const validTraefikFiles = [];
+        let batchFiles = {};
+        if (this.fs.batchRead && traefikFiles.length > 0) {
+          try {
+            batchFiles = await this.fs.batchRead({ paths: traefikFiles }) || {};
+          } catch (err) {
+            console.warn("[TraefikIndexer] Batch read failed, falling back to sequential read:", err);
+            batchFiles = {};
+          }
+        }
         for (const filePath of traefikFiles) {
           try {
-            const content = await this.fs.readFile(filePath);
+            let content = batchFiles[filePath] ?? batchFiles[filePath.replace(/\\/g, "/")];
+            if (content === void 0) {
+              content = await this.fs.readFile(filePath);
+            }
             if (!content) continue;
             const parsed = parseTraefikYaml(content, filePath);
             const hasEntities = parsed.middlewares.length > 0 || parsed.services.length > 0 || parsed.routers.length > 0;
@@ -2833,6 +2845,36 @@ ${cidrLines}
         }
       }
       return "";
+    }
+    async batchRead(req) {
+      const cs = window.ConfigStudio;
+      if (cs?.fs?.batchRead) {
+        try {
+          const res = await cs.fs.batchRead(req);
+          if (res && res.files) {
+            return res.files;
+          }
+        } catch (err) {
+          console.warn("[TraefikPlugin] ConfigStudio.fs.batchRead error:", err);
+        }
+      }
+      try {
+        const res = await fetch("/api/fs/batch-read", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-ConfigStudio-Web": "1"
+          },
+          body: JSON.stringify(req)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          return data.files || {};
+        }
+      } catch (err) {
+        console.warn("[TraefikPlugin] Direct /api/fs/batch-read error:", err);
+      }
+      return {};
     }
   };
   (function initTraefikPlugin() {

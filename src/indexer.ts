@@ -11,6 +11,7 @@ import {
 export interface FsProvider {
   listFiles(): Promise<string[]>;
   readFile(path: string): Promise<string>;
+  batchRead?(req: { paths?: string[]; patterns?: string[]; root?: string }): Promise<Record<string, string>>;
 }
 
 export class TraefikWorkspaceIndexer {
@@ -98,9 +99,22 @@ export class TraefikWorkspaceIndexer {
 
       const validTraefikFiles: string[] = [];
 
+      let batchFiles: Record<string, string> = {};
+      if (this.fs.batchRead && traefikFiles.length > 0) {
+        try {
+          batchFiles = (await this.fs.batchRead({ paths: traefikFiles })) || {};
+        } catch (err) {
+          console.warn('[TraefikIndexer] Batch read failed, falling back to sequential read:', err);
+          batchFiles = {};
+        }
+      }
+
       for (const filePath of traefikFiles) {
         try {
-          const content = await this.fs.readFile(filePath);
+          let content = batchFiles[filePath] ?? batchFiles[filePath.replace(/\\/g, '/')];
+          if (content === undefined) {
+            content = await this.fs.readFile(filePath);
+          }
           if (!content) continue;
 
           const parsed = parseTraefikYaml(content, filePath);

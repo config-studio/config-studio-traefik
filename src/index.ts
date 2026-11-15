@@ -102,6 +102,39 @@ class StudioFsProvider implements FsProvider {
 
     return '';
   }
+
+  async batchRead(req: { paths?: string[]; patterns?: string[]; root?: string }): Promise<Record<string, string>> {
+    const cs = (window as any).ConfigStudio;
+    if (cs?.fs?.batchRead) {
+      try {
+        const res = await cs.fs.batchRead(req);
+        if (res && res.files) {
+          return res.files;
+        }
+      } catch (err) {
+        console.warn('[TraefikPlugin] ConfigStudio.fs.batchRead error:', err);
+      }
+    }
+
+    try {
+      const res = await fetch('/api/fs/batch-read', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-ConfigStudio-Web': '1',
+        },
+        body: JSON.stringify(req),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return data.files || {};
+      }
+    } catch (err) {
+      console.warn('[TraefikPlugin] Direct /api/fs/batch-read error:', err);
+    }
+
+    return {};
+  }
 }
 
 // Plugin Initialization
