@@ -58,5 +58,6 @@
       "issues": "Issues",
       "jumpToDefinition": "Go to Definition"
     }
-  }
+  },
+  "minAppVersion": "2.3.6"
 }
