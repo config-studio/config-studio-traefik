@@ -314,15 +314,19 @@ class StudioFsProvider implements FsProvider {
     setTimeout(() => clearInterval(checkMonaco), 10000);
   }
 
-  // Periodically ensure current active editor instance has jump handlers and up-to-date markers
-  setInterval(() => {
+  // Event-driven editor hooks and marker updates
+  const syncEditor = () => {
     const ed = cs.getEditor?.();
     const m = cs.getMonaco?.();
-    if (ed) {
+    if (ed && m) {
       hookEditorInstance(ed, m);
       updateEditorMarkers(ed, m);
     }
-  }, 2000);
+  };
+
+  cs.onFileOpen?.(syncEditor);
+  cs.onFileSave?.(syncEditor);
+  syncEditor();
 
   // Register Toolbar Buttons
   cs.registerToolbarButton?.({

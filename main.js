@@ -1554,15 +1554,12 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
     }
     function bindEvents() {
       const cs = window.ConfigStudio;
-      const close = () => {
+      const close2 = () => {
         document.removeEventListener("keydown", handleKey);
         overlay.remove();
       };
-      modal.querySelector("#cs-doctor-close-btn")?.addEventListener("click", close);
-      modal.querySelector("#cs-doctor-footer-close-btn")?.addEventListener("click", close);
-      overlay.addEventListener("click", (e) => {
-        if (e.target === overlay) close();
-      });
+      modal.querySelector("#cs-doctor-close-btn")?.addEventListener("click", close2);
+      modal.querySelector("#cs-doctor-footer-close-btn")?.addEventListener("click", close2);
       modal.querySelector("#cs-diag-tab-api")?.addEventListener("click", () => {
         if (activeDiagMode !== "api") {
           activeDiagMode = "api";
@@ -1629,7 +1626,7 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
         }
       });
       modal.querySelector("#cs-doctor-matrix-btn")?.addEventListener("click", () => {
-        close();
+        close2();
         if (onOpenMatrix) onOpenMatrix();
       });
       modal.querySelector("#cs-doctor-dashboard-btn")?.addEventListener("click", () => {
@@ -1645,18 +1642,24 @@ Defined in [${svc.file}:${svc.line}](file://${svc.file}#L${svc.line})`
           const line = Number(btn.getAttribute("data-jump-line")) || 1;
           if (filePath && cs?.openFile) {
             cs.openFile(filePath, { line, highlight: true });
-            close();
+            close2();
           }
         });
       });
     }
+    function close() {
+      document.removeEventListener("keydown", handleKey);
+      overlay.remove();
+    }
     function handleKey(e) {
       if (e.key === "Escape") {
-        document.removeEventListener("keydown", handleKey);
-        overlay.remove();
+        close();
       }
     }
     document.addEventListener("keydown", handleKey);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) close();
+    });
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
     render();
@@ -3020,14 +3023,17 @@ ${cidrLines}
       }, 500);
       setTimeout(() => clearInterval(checkMonaco), 1e4);
     }
-    setInterval(() => {
+    const syncEditor = () => {
       const ed = cs.getEditor?.();
       const m = cs.getMonaco?.();
-      if (ed) {
+      if (ed && m) {
         hookEditorInstance(ed, m);
         updateEditorMarkers(ed, m);
       }
-    }, 2e3);
+    };
+    cs.onFileOpen?.(syncEditor);
+    cs.onFileSave?.(syncEditor);
+    syncEditor();
     cs.registerToolbarButton?.({
       id: "cs-btn-traefik-matrix",
       pluginId: "traefik",

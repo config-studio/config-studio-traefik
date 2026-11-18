@@ -377,10 +377,6 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
     modal.querySelector('#cs-doctor-close-btn')?.addEventListener('click', close);
     modal.querySelector('#cs-doctor-footer-close-btn')?.addEventListener('click', close);
 
-    overlay.addEventListener('click', (e) => {
-      if (e.target === overlay) close();
-    });
-
     // Diagnostic Mode Tabs (API vs Remote SSH Exec)
     modal.querySelector('#cs-diag-tab-api')?.addEventListener('click', () => {
       if (activeDiagMode !== 'api') {
@@ -488,14 +484,21 @@ export function openDoctorModal(indexer: TraefikWorkspaceIndexer, onOpenMatrix?:
     });
   }
 
+  function close() {
+    document.removeEventListener('keydown', handleKey);
+    overlay.remove();
+  }
+
   function handleKey(e: KeyboardEvent) {
     if (e.key === 'Escape') {
-      document.removeEventListener('keydown', handleKey);
-      overlay.remove();
+      close();
     }
   }
 
   document.addEventListener('keydown', handleKey);
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) close();
+  });
 
   overlay.appendChild(modal);
   document.body.appendChild(overlay);

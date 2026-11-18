@@ -13,7 +13,8 @@
     "fs.write",
     "toolbar",
     "contextmenu",
-    "ui.panels"
+    "ui.panels",
+    "terminal.exec"
   ],
   "fileMatches": [
     "traefik*.yml",
